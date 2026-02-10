@@ -11,6 +11,8 @@ services:
         value: 3.11.0
       - key: BOT_TOKEN
         sync: false
+      - key: TEACHER_CODE
+        sync: false
       - key: FIREBASE_CREDENTIALS
         sync: false
       - key: SHEET_ID

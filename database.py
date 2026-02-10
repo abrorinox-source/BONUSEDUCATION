@@ -9,6 +9,8 @@ from google.cloud.firestore import SERVER_TIMESTAMP
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import config
+import os
+import json
 
 
 class FirebaseDB:
@@ -17,7 +19,17 @@ class FirebaseDB:
     def __init__(self):
         """Initialize Firebase connection"""
         if not firebase_admin._apps:
-            cred = credentials.Certificate(config.FIREBASE_KEY_PATH)
+            # Try to get credentials from environment variable first (for Render)
+            firebase_creds = os.getenv('FIREBASE_CREDENTIALS')
+            
+            if firebase_creds:
+                # Use credentials from environment variable
+                cred_dict = json.loads(firebase_creds)
+                cred = credentials.Certificate(cred_dict)
+            else:
+                # Use credentials from file (for local development)
+                cred = credentials.Certificate(config.FIREBASE_KEY_PATH)
+            
             firebase_admin.initialize_app(cred)
         
         self.db = firestore.client()

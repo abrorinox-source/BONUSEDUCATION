@@ -42,7 +42,7 @@ git push origin main
 
 ### 4. Configure Environment Variables on Render
 
-**Only 4 variables needed!** (Render auto-detects the rest)
+**Only 5 variables needed!** (Render auto-detects the rest)
 
 | Key | Value | Description |
 |-----|-------|-------------|
@@ -50,14 +50,24 @@ git push origin main
 | `TEACHER_CODE` | `11991188` | Teacher registration code |
 | `SHEET_ID` | `1SsUnFwqDc1bj4...` | Google Sheets ID |
 | `USE_WEBHOOK` | `True` | Enable webhook mode |
+| `FIREBASE_CREDENTIALS` | `{"type":"service_account",...}` | **Entire JSON from serviceAccountKey.json** |
+
+### 🔑 How to add FIREBASE_CREDENTIALS:
+
+1. Open `serviceAccountKey.json` file
+2. Copy **entire content** (all the JSON)
+3. Paste as value for `FIREBASE_CREDENTIALS` in Render
+4. Click **Save**
+
+Example value:
+```json
+{"type":"service_account","project_id":"your-project","private_key_id":"...","private_key":"-----BEGIN PRIVATE KEY-----\n...","client_email":"...","client_id":"...","auth_uri":"...","token_uri":"...","auth_provider_x509_cert_url":"...","client_x509_cert_url":"..."}
+```
 
 ✨ **That's it!** No need to enter:
 - ❌ `WEBHOOK_HOST` - Auto-detected from `RENDER_EXTERNAL_URL`
 - ❌ `PORT` - Automatically set by Render to 10000
 - ❌ App name - Render knows this automatically
-
-**Firebase Setup:**
-Upload `serviceAccountKey.json` to Render or paste JSON content as `FIREBASE_CREDENTIALS` env var.
 
 ### 5. Deploy Settings
 - **Build Command**: `pip install -r requirements.txt`
