@@ -6,6 +6,7 @@ All teacher-related functionality
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 from database import db
 from sheets_manager import sheets_manager
 import keyboards
@@ -14,6 +15,39 @@ import config
 from datetime import datetime
 
 router = Router()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS FOR ERROR HANDLING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def safe_edit_message(callback: CallbackQuery, text: str, reply_markup=None):
+    """
+    Safely edit message with proper error handling
+    Handles 'message is not modified' errors gracefully
+    """
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            # Message content is the same, just answer the callback
+            await safe_answer_callback(callback)
+        else:
+            raise
+
+
+async def safe_answer_callback(callback: CallbackQuery, text: str = None, show_alert: bool = False):
+    """
+    Safely answer callback query with proper error handling
+    Handles 'query is too old' errors gracefully
+    """
+    try:
+        await callback.answer(text, show_alert=show_alert)
+    except TelegramBadRequest as e:
+        if "query is too old" in str(e):
+            print(f"Callback query expired, ignoring: {callback.data}")
+        else:
+            raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -408,7 +442,7 @@ async def back_to_students_list(callback: CallbackQuery):
 async def back_to_teacher_menu(callback: CallbackQuery):
     """Return to teacher menu"""
     await callback.message.delete()
-    await callback.answer()
+    await safe_answer_callback(callback)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -422,14 +456,15 @@ async def handle_settings(callback: CallbackQuery):
     
     if action == "back":
         await callback.message.delete()
-        await callback.answer()
+        await safe_answer_callback(callback)
         return
     
     if action == "commission":
         settings = db.get_settings()
         commission_rate = settings.get('commission_rate', config.DEFAULT_COMMISSION_RATE)
         
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"💰 TRANSFER COMMISSION\n"
             f"Current Rate: {commission_rate * 100}%\n\n"
             f"Select new commission rate:",
@@ -445,7 +480,8 @@ async def handle_settings(callback: CallbackQuery):
             'maintenance': '🔧 Maintenance mode - Only teachers can access'
         }
         
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"🔓 BOT STATUS\n"
             f"Current: {current_status.upper()}\n"
             f"{status_description.get(current_status, '')}\n\n"
@@ -454,91 +490,33 @@ async def handle_settings(callback: CallbackQuery):
         )
     
     elif action == "sync_control":
+        # Get current sync settings from database
         settings = db.get_settings()
         sync_enabled = settings.get('sync_enabled', True)
         sync_interval = settings.get('sync_interval', config.DEFAULT_SYNC_INTERVAL)
         
-        await callback.message.edit_text(
-            f"🔄 SYNC CONTROL\n"
+        # Display sync control menu
+        await safe_edit_message(
+            callback,
+            f"🔄 SYNC CONTROL\n\n"
             f"Status: {'✅ Enabled' if sync_enabled else '❌ Disabled'}\n"
+            f"Task: {'🟢 Running' if sheets_manager.is_sync_running() else '🔴 Stopped'}\n"
             f"Interval: {sync_interval} seconds\n\n"
             f"Control sync settings:",
             reply_markup=keyboards.get_sync_control_keyboard(sync_enabled)
         )
     
     elif action == "transaction_history":
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"📜 TRANSACTION HISTORY\n"
             f"Filter transaction logs:",
             reply_markup=keyboards.get_transaction_history_keyboard()
         )
     
-    elif action == "compare_data":
-        # Trigger comparison directly
-        await callback.answer("🔍 Comparing data...")
-        
-        try:
-            # Get Firebase data
-            fb_users = db.get_all_users(role='student')
-            
-            # Get Sheets data
-            sheet_data = await sheets_manager.get_all_users_from_sheets()
-            
-            # Compare
-            fb_ids = {u['user_id'] for u in fb_users}
-            sheet_ids = {u['user_id'] for u in sheet_data}
-            
-            only_fb = fb_ids - sheet_ids
-            only_sheet = sheet_ids - fb_ids
-            common = fb_ids & sheet_ids
-            
-            # Check differences in points
-            differences = []
-            for user_id in common:
-                fb_user = next(u for u in fb_users if u['user_id'] == user_id)
-                sheet_user = next(u for u in sheet_data if u['user_id'] == user_id)
-                
-                fb_points = fb_user.get('points', 0)
-                sheet_points = sheet_user.get('points', 0)
-                
-                if fb_points != sheet_points:
-                    differences.append({
-                        'user_id': user_id,
-                        'name': fb_user.get('full_name', 'Unknown'),
-                        'fb_points': fb_points,
-                        'sheet_points': sheet_points,
-                        'diff': fb_points - sheet_points
-                    })
-            
-            text = f"🔍 DATA COMPARISON\n"
-            text += f"📊 Statistics:\n"
-            text += f"• Common: {len(common)}\n"
-            text += f"• Only in Firebase: {len(only_fb)}\n"
-            text += f"• Only in Sheets: {len(only_sheet)}\n"
-            text += f"• Point differences: {len(differences)}\n\n"
-            
-            if differences:
-                text += f"⚠️ Points Mismatch:\n"
-                for diff in differences[:5]:
-                    text += f"• {diff['name']}: FB={diff['fb_points']}, Sheet={diff['sheet_points']}\n"
-                
-                if len(differences) > 5:
-                    text += f"\n... and {len(differences) - 5} more\n"
-            else:
-                text += "✅ All data is synchronized!\n"
-            
-            await callback.message.edit_text(
-                text,
-                reply_markup=keyboards.get_comparison_keyboard()
-            )
-        except Exception as e:
-            await callback.message.edit_text(
-                f"❌ Error comparing data:\n{str(e)}",
-                reply_markup=keyboards.get_back_keyboard("settings:back")
-            )
-    
     elif action == "export":
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"📥 EXPORT DATA\n"
             f"Select export format:",
             reply_markup=keyboards.get_export_keyboard()
@@ -549,7 +527,8 @@ async def handle_settings(callback: CallbackQuery):
         settings = db.get_settings()
         current_rules = settings.get('rules_text', 'No rules set yet.')
         
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"📝 BOT RULES\n\n"
             f"Current Rules:\n"
             f"{current_rules}\n\n"
@@ -558,13 +537,14 @@ async def handle_settings(callback: CallbackQuery):
         )
     
     elif action == "broadcast":
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"📢 GLOBAL BROADCAST\n"
             f"Select target audience:",
             reply_markup=keyboards.get_broadcast_keyboard()
         )
     
-    await callback.answer()
+    await safe_answer_callback(callback)
 
 
 @router.callback_query(F.data.startswith("bot_status:"))
@@ -579,116 +559,179 @@ async def change_bot_status(callback: CallbackQuery):
         'maintenance': '🔧 MAINTENANCE MODE\nOnly teachers can access. Students will see maintenance message.'
     }
     
-    await callback.message.edit_text(
+    await safe_edit_message(
+        callback,
         f"✅ Bot status updated!\n\n"
         f"{status_info.get(new_status, '')}",
         reply_markup=keyboards.get_back_keyboard("settings:back")
     )
-    await callback.answer(f"✅ Changed to {new_status.upper()} mode")
+    await safe_answer_callback(callback, f"✅ Changed to {new_status.upper()} mode")
 
 
 @router.callback_query(F.data.startswith("sync:"))
 async def handle_sync_control(callback: CallbackQuery):
-    """Handle sync control actions"""
-    action = callback.data.split(":")[1]
-    settings = db.get_settings()
-    
-    if action == "toggle":
+    """
+    Handle all sync control actions
+    Centralized handler for sync-related callbacks
+    """
+    try:
+        # Parse callback data
+        parts = callback.data.split(":")
+        action = parts[1] if len(parts) > 1 else None
+        
+        if not action:
+            await safe_answer_callback(callback, "❌ Invalid action", show_alert=True)
+            return
+        
+        # Get current settings
+        settings = db.get_settings()
         sync_enabled = settings.get('sync_enabled', True)
-        new_state = not sync_enabled
-        db.update_settings({'sync_enabled': new_state})
+        sync_interval = settings.get('sync_interval', config.DEFAULT_SYNC_INTERVAL)
         
-        status_text = "enabled" if new_state else "disabled"
-        await callback.answer(f"✅ Sync {status_text}")
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Show main sync control menu
+        # ═══════════════════════════════════════════════════════════════
+        if action == "control":
+            await safe_edit_message(
+                callback,
+                f"🔄 SYNC CONTROL\n"
+                f"Status: {'✅ Enabled' if sync_enabled else '❌ Disabled'}\n"
+                f"Task: {'🟢 Running' if sheets_manager.is_sync_running() else '🔴 Stopped'}\n"
+                f"Interval: {sync_interval} seconds\n\n"
+                f"Control sync settings:",
+                reply_markup=keyboards.get_sync_control_keyboard(sync_enabled)
+            )
+            await safe_answer_callback(callback)
         
-        # Refresh menu
-        await callback.message.edit_text(
-            f"🔄 SYNC CONTROL\n"
-            f"Status: {'✅ Enabled' if new_state else '❌ Disabled'}\n"
-            f"Interval: {settings.get('sync_interval', config.DEFAULT_SYNC_INTERVAL)} seconds\n\n"
-            f"Control sync settings:",
-            reply_markup=keyboards.get_sync_control_keyboard(new_state)
-        )
-    
-    elif action == "interval":
-        await callback.message.edit_text(
-            f"⏱️ SYNC INTERVAL\n"
-            f"Current: {settings.get('sync_interval', config.DEFAULT_SYNC_INTERVAL)} seconds\n\n"
-            f"Select new interval:",
-            reply_markup=keyboards.get_sync_interval_keyboard()
-        )
-        await callback.answer()
-    
-    elif action == "manual":
-        await callback.answer("🔄 Starting sync...")
-        stats = await sheets_manager.smart_delta_sync()
-        
-        await callback.message.edit_text(
-            f"✅ Manual sync complete!\n"
-            f"• Updated: {stats['updated']}\n"
-            f"• Added: {stats['added']}\n"
-            f"• Errors: {stats['errors']}",
-            reply_markup=keyboards.get_back_keyboard("settings:back")
-        )
-    
-    elif action == "stats":
-        stats = settings.get('sync_statistics', {})
-        await callback.message.edit_text(
-            f"📊 SYNC STATISTICS\n"
-            f"Total Syncs: {stats.get('total_syncs', 0)}\n"
-            f"Successful: {stats.get('successful_syncs', 0)}\n"
-            f"Failed: {stats.get('failed_syncs', 0)}\n"
-            f"Last Error: {stats.get('last_error', 'None')}",
-            reply_markup=keyboards.get_back_keyboard("settings:sync_control")
-        )
-        await callback.answer()
-    
-    elif action == "control":
-        sync_enabled = settings.get('sync_enabled', True)
-        await callback.message.edit_text(
-            f"🔄 SYNC CONTROL\n"
-            f"Status: {'✅ Enabled' if sync_enabled else '❌ Disabled'}\n"
-            f"Interval: {settings.get('sync_interval', config.DEFAULT_SYNC_INTERVAL)} seconds\n\n"
-            f"Control sync settings:",
-            reply_markup=keyboards.get_sync_control_keyboard(sync_enabled)
-        )
-        await callback.answer()
-    
-    elif action == "force_sheets":
-        # Force sync from Sheets to Firebase (ignore timestamps)
-        await callback.answer("🔄 Forcing Sheets → Firebase sync...")
-        try:
-            stats = await sheets_manager.sync_sheets_to_firebase()
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Toggle sync on/off
+        # ═══════════════════════════════════════════════════════════════
+        elif action == "toggle":
+            new_state = not sync_enabled
+            db.update_settings({'sync_enabled': new_state})
             
-            await callback.message.edit_text(
-                f"✅ FORCED SHEETS → FIREBASE SYNC\n\n"
-                f"• Updated: {stats['updated']}\n"
-                f"• Added: {stats['added']}\n"
-                f"• Errors: {stats['errors']}\n\n"
-                f"⚠️ All Sheets data has been copied to Firebase.\n"
-                f"Timestamps were ignored during this sync.",
-                reply_markup=keyboards.get_back_keyboard("settings:sync_control")
+            # Start or stop the background sync task
+            if new_state:
+                sheets_manager.start_background_sync()
+                status_text = "enabled and started"
+                status_emoji = "✅"
+            else:
+                sheets_manager.stop_background_sync()
+                status_text = "disabled and stopped"
+                status_emoji = "⏸️"
+            
+            await safe_answer_callback(callback, f"{status_emoji} Sync {status_text}!", show_alert=False)
+            
+            # Refresh the sync control menu with updated state
+            await safe_edit_message(
+                callback,
+                f"🔄 SYNC CONTROL\n"
+                f"Status: {'✅ Enabled' if new_state else '❌ Disabled'}\n"
+                f"Task: {'🟢 Running' if sheets_manager.is_sync_running() else '🔴 Stopped'}\n"
+                f"Interval: {sync_interval} seconds\n\n"
+                f"Control sync settings:",
+                reply_markup=keyboards.get_sync_control_keyboard(new_state)
             )
-        except Exception as e:
-            await callback.message.edit_text(
-                f"❌ Sync failed: {str(e)}",
-                reply_markup=keyboards.get_back_keyboard("settings:sync_control")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Show interval selection menu
+        # ═══════════════════════════════════════════════════════════════
+        elif action == "interval":
+            await safe_edit_message(
+                callback,
+                f"⏱️ SYNC INTERVAL\n"
+                f"Current: {sync_interval} seconds\n\n"
+                f"Select new interval:",
+                reply_markup=keyboards.get_sync_interval_keyboard()
             )
+            await safe_answer_callback(callback)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Set specific interval
+        # ═══════════════════════════════════════════════════════════════
+        elif action == "set_interval":
+            # This is now handled here directly
+            if len(parts) < 3:
+                await safe_answer_callback(callback, "❌ Invalid interval format", show_alert=True)
+                return
+            
+            try:
+                interval = int(parts[2])
+                
+                # Validate interval
+                if interval < 5 or interval > 3600:
+                    await safe_answer_callback(callback, "❌ Interval must be between 5s and 1 hour", show_alert=True)
+                    return
+                
+                # Get old interval
+                old_interval = sync_interval
+                
+                # Update settings
+                success = db.update_settings({'sync_interval': interval})
+                
+                if success:
+                    # Verify update
+                    new_settings = db.get_settings()
+                    new_interval = new_settings.get('sync_interval', interval)
+                    print(f"⚙️ Sync interval changed to {new_interval} seconds")
+                    
+                    await safe_answer_callback(callback, f"✅ Interval set to {interval}s")
+                    
+                    # Show updated sync control menu
+                    await safe_edit_message(
+                        callback,
+                        f"✅ SYNC INTERVAL UPDATED\n\n"
+                        f"Previous: {old_interval}s\n"
+                        f"New: {new_interval}s\n"
+                        f"Status: {'✅ Enabled' if sync_enabled else '❌ Disabled'}\n\n"
+                        f"Next sync will use the new interval.",
+                        reply_markup=keyboards.get_back_keyboard("sync:control")
+                    )
+                else:
+                    await safe_answer_callback(callback, "❌ Failed to update interval", show_alert=True)
+            
+            except ValueError:
+                await safe_answer_callback(callback, "❌ Invalid interval value", show_alert=True)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Force sync from Sheets to Firebase (ignore timestamps)
+        # ═══════════════════════════════════════════════════════════════
+        elif action == "force_sheets":
+            await safe_answer_callback(callback, "🔄 Forcing Sheets → Firebase sync...", show_alert=False)
+            
+            try:
+                stats = await sheets_manager.sync_sheets_to_firebase()
+                
+                await safe_edit_message(
+                    callback,
+                    f"✅ FORCED SHEETS → FIREBASE SYNC\n\n"
+                    f"📊 Results:\n"
+                    f"• Updated: {stats.get('updated', 0)}\n"
+                    f"• Added: {stats.get('added', 0)}\n"
+                    f"• Errors: {stats.get('errors', 0)}\n\n"
+                    f"⚠️ All Sheets data has been copied to Firebase.\n"
+                    f"Timestamps were ignored during this sync.",
+                    reply_markup=keyboards.get_back_keyboard("sync:control")
+                )
+            except Exception as e:
+                await safe_edit_message(
+                    callback,
+                    f"❌ Force sync failed:\n{str(e)}",
+                    reply_markup=keyboards.get_back_keyboard("sync:control")
+                )
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Unknown action
+        # ═══════════════════════════════════════════════════════════════
+        else:
+            await safe_answer_callback(callback, f"❌ Unknown action: {action}", show_alert=True)
+    
+    except Exception as e:
+        print(f"Error in handle_sync_control: {e}")
+        await safe_answer_callback(callback, f"❌ Error: {str(e)}", show_alert=True)
     
 
 
-@router.callback_query(F.data.startswith("sync:set_interval:"))
-async def set_sync_interval(callback: CallbackQuery):
-    """Set sync interval"""
-    interval = int(callback.data.split(":")[2])
-    
-    db.update_settings({'sync_interval': interval})
-    
-    await callback.message.edit_text(
-        f"✅ Sync interval updated to {interval} seconds",
-        reply_markup=keyboards.get_back_keyboard("settings:sync_control")
-    )
-    await callback.answer(f"✅ Interval set to {interval}s")
 
 
 @router.callback_query(F.data.startswith("logs:"))
@@ -699,12 +742,13 @@ async def handle_transaction_logs(callback: CallbackQuery):
     
     if action == "export_menu":
         # Show export format menu
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             f"📊 EXPORT TRANSACTION LOGS\n"
             f"Select export format:",
             reply_markup=keyboards.get_logs_export_keyboard()
         )
-        await callback.answer()
+        await safe_answer_callback(callback)
         return
     
     if action == "export":

@@ -107,13 +107,12 @@ def get_settings_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔓 Bot Status", callback_data="settings:bot_status")
     builder.button(text="🔄 Sync Control", callback_data="settings:sync_control")
     builder.button(text="📜 Transaction History", callback_data="settings:transaction_history")
-    builder.button(text="🔍 Compare Data", callback_data="settings:compare_data")
     builder.button(text="📥 Export Data", callback_data="settings:export")
     builder.button(text="📝 Edit Rules", callback_data="settings:edit_rules")
     builder.button(text="📢 Global Broadcast", callback_data="settings:broadcast")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(2, 2, 2, 2, 1)
+    builder.adjust(2, 2, 2, 1, 1)
     
     return builder.as_markup()
 
@@ -142,14 +141,11 @@ def get_sync_control_keyboard(sync_enabled: bool) -> InlineKeyboardMarkup:
     builder.button(text=toggle_text, callback_data="sync:toggle")
     
     builder.button(text="⏱️ Change Interval", callback_data="sync:interval")
-    builder.button(text="🔄 Sync Now (Smart)", callback_data="sync:manual")
-    
     builder.button(text="📥 Force: Sheets → Firebase", callback_data="sync:force_sheets")
-    builder.button(text="📊 Statistics", callback_data="sync:stats")
     
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(1, 2, 1, 1, 1)
+    builder.adjust(1, 2, 1)
     
     return builder.as_markup()
 
@@ -302,21 +298,6 @@ def get_bot_status_keyboard(current_status: str) -> InlineKeyboardMarkup:
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
     builder.adjust(1, 1, 1)
-    
-    return builder.as_markup()
-
-
-def get_comparison_keyboard() -> InlineKeyboardMarkup:
-    """Data comparison actions keyboard"""
-    builder = InlineKeyboardBuilder()
-    
-    builder.button(text="🔄 Sync Firebase → Sheets", callback_data="compare:sync_fb_to_sh")
-    builder.button(text="🔄 Sync Sheets → Firebase", callback_data="compare:sync_sh_to_fb")
-    builder.button(text="📥 Export Report", callback_data="compare:export")
-    builder.button(text="🔍 Compare Again", callback_data="compare:refresh")
-    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
-    
-    builder.adjust(2, 2, 1)
     
     return builder.as_markup()
 

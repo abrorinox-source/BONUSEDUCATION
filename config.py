@@ -3,14 +3,20 @@ Configuration file for Telegram Bot
 Contains all credentials and settings
 """
 
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# CREDENTIALS (Production)
+# CREDENTIALS (from environment variables)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BOT_TOKEN = "8332724613:AAGcV0-zFYgx4wnAib76qV5sO6hmac9_-1E"
-FIREBASE_KEY_PATH = 'serviceAccountKey.json'
-SHEET_ID = "1SsUnFwqDc1bj46LwHb0OtwPZkCyU3Ip4A96xSjWZzRo"
-TEACHER_CODE = '11991188'
+BOT_TOKEN = os.getenv('BOT_TOKEN', "8466410998:AAFUo6iKrDN8YUTzYUkieJ_eQ76cnC5_Jps")
+FIREBASE_KEY_PATH = os.getenv('FIREBASE_KEY_PATH', 'serviceAccountKey.json')
+SHEET_ID = os.getenv('SHEET_ID', "1SsUnFwqDc1bj46LwHb0OtwPZkCyU3Ip4A96xSjWZzRo")
+TEACHER_CODE = os.getenv('TEACHER_CODE', '11991188')
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BOT SETTINGS
@@ -20,8 +26,8 @@ TEACHER_CODE = '11991188'
 DEFAULT_COMMISSION_RATE = 0.10
 
 # Sync settings
-DEFAULT_SYNC_INTERVAL = 300  # 5 minutes - optimal for most cases
-MIN_SYNC_INTERVAL = 60  # 1 minute minimum
+DEFAULT_SYNC_INTERVAL = 10  # 10 seconds - for real-time sync
+MIN_SYNC_INTERVAL = 5  # 5 seconds minimum
 MAX_SYNC_INTERVAL = 3600  # 1 hour maximum
 
 # Google Sheets column mapping
@@ -41,6 +47,17 @@ STUDENT_HISTORY_LIMIT = 15
 
 # Bot modes
 SILENT_START = False  # Set to True to start without notifications
+
+# Webhook settings (for production deployment)
+USE_WEBHOOK = os.getenv('USE_WEBHOOK', 'True').lower() == 'true'
+WEBHOOK_PATH = os.getenv('WEBHOOK_PATH', "/webhook")
+WEBAPP_HOST = "0.0.0.0"  # Listen on all interfaces
+WEBAPP_PORT = int(os.getenv('PORT', '10000'))  # Render uses port 10000 by default
+
+# Auto-detect webhook URL from Render environment
+# RENDER_EXTERNAL_URL is automatically set by Render
+WEBHOOK_HOST = os.getenv('RENDER_EXTERNAL_URL') or os.getenv('WEBHOOK_HOST', "")
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}" if WEBHOOK_HOST else ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # GOOGLE SHEETS API SCOPES

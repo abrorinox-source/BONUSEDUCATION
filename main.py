@@ -8,6 +8,8 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
 # Import configuration
 import config
@@ -34,27 +36,10 @@ async def on_startup(bot: Bot):
     settings = db.get_settings()
     print(f"✅ Settings loaded: {settings}")
     
-    # Perform initial sync from Sheets to Firebase
-    print("🔄 Performing initial sync...")
-    await sheets_manager.smart_delta_sync()
-    print("✅ Initial sync complete")
-    
     # Start background sync task
     if db.is_sync_enabled():
-        asyncio.create_task(sheets_manager.background_sync_loop())
-        print("✅ Background sync task started")
-    
-    # Notify teacher (if not silent mode)
-    if not config.SILENT_START:
-        teachers = db.get_all_users(role='teacher', status='active')
-        for teacher in teachers:
-            try:
-                await bot.send_message(
-                    chat_id=teacher['user_id'],
-                    text="📢 Bot is now ONLINE and ready to use!"
-                )
-            except Exception as e:
-                print(f"Could not notify teacher {teacher['user_id']}: {e}")
+        sheets_manager.start_background_sync()
+        print("✅ Background sync enabled and started")
     
     print("✅ Bot startup complete!")
 
@@ -62,19 +47,25 @@ async def on_startup(bot: Bot):
 async def on_shutdown(bot: Bot):
     """Actions on bot shutdown"""
     print("🛑 Bot shutting down...")
-    
-    # Notify teacher
-    teachers = db.get_all_users(role='teacher', status='active')
-    for teacher in teachers:
-        try:
-            await bot.send_message(
-                chat_id=teacher['user_id'],
-                text="⚠️ Bot is going OFFLINE."
-            )
-        except Exception as e:
-            print(f"Could not notify teacher {teacher['user_id']}: {e}")
-    
     print("✅ Bot shutdown complete")
+
+
+async def on_startup_webhook(bot: Bot):
+    """Set webhook on startup"""
+    await on_startup(bot)
+    await bot.set_webhook(
+        url=config.WEBHOOK_URL,
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query"]
+    )
+    print(f"✅ Webhook set to: {config.WEBHOOK_URL}")
+
+
+async def on_shutdown_webhook(bot: Bot):
+    """Remove webhook on shutdown"""
+    await on_shutdown(bot)
+    await bot.delete_webhook()
+    print("✅ Webhook removed")
 
 
 async def main():
@@ -95,31 +86,71 @@ async def main():
     dp.include_router(teacher.router)
     dp.include_router(student.router)
     
-    # Register startup/shutdown handlers
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-    
-    # Start polling
+    # Print startup info
     print("=" * 50)
     print("🚀 TELEGRAM BOT - POINTS MANAGEMENT SYSTEM")
     print("=" * 50)
     print(f"Bot Token: {config.BOT_TOKEN[:20]}...")
     print(f"Sheet ID: {config.SHEET_ID}")
     print(f"Silent Start: {config.SILENT_START}")
-    print("\n⚡ Polling Optimizations:")
-    print("  • Fast polling timeout: 10s (faster response)")
-    print("  • Request timeout: 30s (reliable connection)")
+    print(f"Mode: {'WEBHOOK' if config.USE_WEBHOOK else 'POLLING'}")
+    
+    if config.USE_WEBHOOK:
+        print(f"Webhook URL: {config.WEBHOOK_URL}")
+        print(f"Listening on: {config.WEBAPP_HOST}:{config.WEBAPP_PORT}")
+    else:
+        print("\n⚡ Polling Optimizations:")
+        print("  • Fast polling timeout: 10s (faster response)")
+        print("  • Request timeout: 30s (reliable connection)")
     print("=" * 50)
     
     try:
-        # OPTIMIZED POLLING - Faster response times
-        await dp.start_polling(
-            bot,
-            allowed_updates=dp.resolve_used_update_types(),
-            polling_timeout=10,  # Check for updates every 10s (default: 30s)
-            request_timeout=30,  # Wait max 30s for server response
-            handle_signals=True  # Proper shutdown on Ctrl+C
-        )
+        if config.USE_WEBHOOK:
+            # WEBHOOK MODE - For production (Render)
+            dp.startup.register(on_startup_webhook)
+            dp.shutdown.register(on_shutdown_webhook)
+            
+            # Create aiohttp application
+            app = web.Application()
+            
+            # Setup webhook handler
+            webhook_handler = SimpleRequestHandler(
+                dispatcher=dp,
+                bot=bot
+            )
+            webhook_handler.register(app, path=config.WEBHOOK_PATH)
+            
+            # Setup application
+            setup_application(app, dp, bot=bot)
+            
+            # Start web server
+            print("🌐 Starting webhook server...")
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(
+                runner,
+                host=config.WEBAPP_HOST,
+                port=config.WEBAPP_PORT
+            )
+            await site.start()
+            print(f"✅ Webhook server started on {config.WEBAPP_HOST}:{config.WEBAPP_PORT}")
+            
+            # Keep running
+            await asyncio.Event().wait()
+            
+        else:
+            # POLLING MODE - For local development
+            dp.startup.register(on_startup)
+            dp.shutdown.register(on_shutdown)
+            
+            await dp.start_polling(
+                bot,
+                allowed_updates=dp.resolve_used_update_types(),
+                polling_timeout=10,
+                request_timeout=30,
+                handle_signals=True
+            )
+            
     except KeyboardInterrupt:
         print("\n⚠️ Bot stopped by user")
     except Exception as e:

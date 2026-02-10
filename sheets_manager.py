@@ -25,6 +25,7 @@ class GoogleSheetsManager:
         self.service = build('sheets', 'v4', credentials=self.credentials)
         self.sheet_id = config.SHEET_ID
         self.sync_lock = asyncio.Lock()
+        self.background_task = None  # Track the background sync task
     
     # ═══════════════════════════════════════════════════════════════════════════
     # READ OPERATIONS
@@ -120,8 +121,26 @@ class GoogleSheetsManager:
             return False
     
     def add_user(self, user_data: Dict[str, Any]) -> bool:
-        """Add new user to Google Sheets"""
+        """Add new user to Google Sheets - finds first empty row after header"""
         try:
+            # Get all data including empty rows
+            result = self.service.spreadsheets().values().get(
+                spreadsheetId=self.sheet_id,
+                range='Sheet1!A2:A'  # Get all user_id column starting from row 2
+            ).execute()
+            
+            rows = result.get('values', [])
+            
+            # Find first empty row (row with empty user_id)
+            target_row = 2  # Start from row 2 (after header)
+            for idx, row in enumerate(rows):
+                # If row is completely empty or first cell is empty
+                if not row or not row[0] or not row[0].strip():
+                    target_row = idx + 2  # +2 because enumerate starts at 0 and we start at row 2
+                    break
+                target_row = idx + 3  # Next row after last filled row
+            
+            # Prepare data
             values = [[
                 user_data.get('user_id', ''),
                 user_data.get('full_name', ''),
@@ -133,14 +152,16 @@ class GoogleSheetsManager:
             
             body = {'values': values}
             
-            self.service.spreadsheets().values().append(
+            # Insert at specific row
+            range_name = f'Sheet1!A{target_row}:F{target_row}'
+            self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheet_id,
-                range='Sheet1!A:F',
+                range=range_name,
                 valueInputOption='RAW',
-                insertDataOption='INSERT_ROWS',
                 body=body
             ).execute()
             
+            print(f"✅ Added user to row {target_row}: {user_data.get('full_name', 'Unknown')}")
             return True
         
         except HttpError as e:
@@ -300,9 +321,16 @@ class GoogleSheetsManager:
                     sheets_timestamp = self._parse_timestamp(sheets_last_updated)
                     firebase_timestamp = self._parse_firebase_timestamp(firebase_last_updated)
                     
-                    # Check if points are different
+                    # Check if points are the same
                     if firebase_points == sheets_points:
-                        # No difference, skip
+                        # Points are same - check if timestamps are also close
+                        # If both have timestamps and they're similar (within 5 seconds), skip
+                        if sheets_timestamp and firebase_timestamp:
+                            time_diff = abs((sheets_timestamp - firebase_timestamp).total_seconds())
+                            if time_diff < 5:  # Within 5 seconds - skip
+                                stats['skipped'] += 1
+                                continue
+                        # If points same but no timestamp info, skip anyway
                         stats['skipped'] += 1
                         continue
                     
@@ -349,10 +377,19 @@ class GoogleSheetsManager:
                 
                 # Update sync statistics
                 settings = db.get_settings()
+                sync_stats = settings.get('sync_statistics', {
+                    'total_syncs': 0,
+                    'successful_syncs': 0,
+                    'failed_syncs': 0,
+                    'last_error': None
+                })
+                
+                sync_stats['total_syncs'] = sync_stats.get('total_syncs', 0) + 1
+                sync_stats['successful_syncs'] = sync_stats.get('successful_syncs', 0) + 1
+                
                 db.update_settings({
                     'last_sync_time': datetime.now().isoformat(),
-                    'sync_statistics.total_syncs': settings['sync_statistics']['total_syncs'] + 1,
-                    'sync_statistics.successful_syncs': settings['sync_statistics']['successful_syncs'] + 1
+                    'sync_statistics': sync_stats
                 })
                 
                 print(f"🔄 Sync complete: {stats['updated']} updated, {stats['added']} added, {stats['skipped']} skipped")
@@ -364,10 +401,19 @@ class GoogleSheetsManager:
                 
                 # Update failure statistics
                 settings = db.get_settings()
+                sync_stats = settings.get('sync_statistics', {
+                    'total_syncs': 0,
+                    'successful_syncs': 0,
+                    'failed_syncs': 0,
+                    'last_error': None
+                })
+                
+                sync_stats['total_syncs'] = sync_stats.get('total_syncs', 0) + 1
+                sync_stats['failed_syncs'] = sync_stats.get('failed_syncs', 0) + 1
+                sync_stats['last_error'] = str(e)
+                
                 db.update_settings({
-                    'sync_statistics.total_syncs': settings['sync_statistics']['total_syncs'] + 1,
-                    'sync_statistics.failed_syncs': settings['sync_statistics']['failed_syncs'] + 1,
-                    'sync_statistics.last_error': str(e)
+                    'sync_statistics': sync_stats
                 })
                 
                 return stats
@@ -524,15 +570,15 @@ class GoogleSheetsManager:
         
         while True:
             try:
-                # Check if sync is enabled
-                if db.is_sync_enabled():
-                    await self.smart_delta_sync()
-                
-                # Get sync interval from settings
+                # Get sync interval from settings (check every iteration for dynamic updates)
                 settings = db.get_settings()
                 interval = settings.get('sync_interval', config.DEFAULT_SYNC_INTERVAL)
                 
+                # Wait for the interval
                 await asyncio.sleep(interval)
+                
+                # Perform sync (sync_enabled check already done in start/stop methods)
+                await self.smart_delta_sync()
             
             except asyncio.CancelledError:
                 print("🛑 Background sync task cancelled")
@@ -540,6 +586,30 @@ class GoogleSheetsManager:
             except Exception as e:
                 print(f"⚠️ Background sync error: {e}")
                 await asyncio.sleep(5)  # Wait before retry
+    
+    def start_background_sync(self):
+        """Start the background sync task"""
+        if self.background_task is None or self.background_task.done():
+            self.background_task = asyncio.create_task(self.background_sync_loop())
+            print("✅ Background sync task started")
+            return True
+        else:
+            print("⚠️ Background sync task already running")
+            return False
+    
+    def stop_background_sync(self):
+        """Stop the background sync task"""
+        if self.background_task and not self.background_task.done():
+            self.background_task.cancel()
+            print("🛑 Background sync task stopped")
+            return True
+        else:
+            print("⚠️ No background sync task to stop")
+            return False
+    
+    def is_sync_running(self):
+        """Check if background sync task is running"""
+        return self.background_task is not None and not self.background_task.done()
 
 
 # Global sheets manager instance

@@ -245,10 +245,11 @@ class FirebaseDB:
     def update_settings(self, updates: Dict[str, Any]) -> bool:
         """Update bot settings"""
         try:
-            self.settings_ref.document('bot_config').update(updates)
+            # Use set with merge=True to create document if it doesn't exist
+            self.settings_ref.document('bot_config').set(updates, merge=True)
             return True
         except Exception as e:
-            print(f"Error updating settings: {e}")
+            print(f"❌ Error updating settings: {e}")
             return False
     
     def get_commission_rate(self) -> float:

@@ -15,3 +15,7 @@ services:
         sync: false
       - key: SHEET_ID
         sync: false
+      - key: USE_WEBHOOK
+        value: True
+      # Note: WEBHOOK_HOST not needed - auto-detected from RENDER_EXTERNAL_URL
+      # Note: PORT is automatically set by Render to 10000
