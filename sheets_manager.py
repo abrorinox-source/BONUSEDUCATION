@@ -11,6 +11,8 @@ import asyncio
 from datetime import datetime
 import config
 from database import db
+import os
+import json
 
 
 class GoogleSheetsManager:
@@ -18,10 +20,23 @@ class GoogleSheetsManager:
     
     def __init__(self):
         """Initialize Google Sheets API"""
-        self.credentials = service_account.Credentials.from_service_account_file(
-            config.FIREBASE_KEY_PATH,
-            scopes=config.GOOGLE_SCOPES
-        )
+        # Try to get credentials from environment variable first (for Render)
+        firebase_creds = os.getenv('FIREBASE_CREDENTIALS')
+        
+        if firebase_creds:
+            # Use credentials from environment variable
+            cred_dict = json.loads(firebase_creds)
+            self.credentials = service_account.Credentials.from_service_account_info(
+                cred_dict,
+                scopes=config.GOOGLE_SCOPES
+            )
+        else:
+            # Use credentials from file (for local development)
+            self.credentials = service_account.Credentials.from_service_account_file(
+                config.FIREBASE_KEY_PATH,
+                scopes=config.GOOGLE_SCOPES
+            )
+        
         self.service = build('sheets', 'v4', credentials=self.credentials)
         self.sheet_id = config.SHEET_ID
         self.sync_lock = asyncio.Lock()
