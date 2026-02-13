@@ -697,6 +697,59 @@ async def handle_sync_control(callback: CallbackQuery):
                 await safe_answer_callback(callback, "❌ Invalid interval value", show_alert=True)
         
         # ═══════════════════════════════════════════════════════════════
+        # ACTION: Sync names only (from Sheets to Firebase)
+        # ═══════════════════════════════════════════════════════════════
+        elif action == "names_only":
+            await safe_answer_callback(callback, "👤 Syncing names only...", show_alert=False)
+            
+            try:
+                stats = await sheets_manager.sync_names_only()
+                
+                await safe_edit_message(
+                    callback,
+                    f"✅ NAMES SYNC COMPLETE\n\n"
+                    f"📊 Results:\n"
+                    f"• Updated: {stats.get('updated', 0)} students\n"
+                    f"• Errors: {stats.get('errors', 0)}\n\n"
+                    f"👤 Only names, phones, and usernames were updated.\n"
+                    f"💰 Points were NOT touched.",
+                    reply_markup=keyboards.get_back_keyboard("sync:control")
+                )
+            except Exception as e:
+                await safe_edit_message(
+                    callback,
+                    f"❌ Names sync failed:\n{str(e)}",
+                    reply_markup=keyboards.get_back_keyboard("sync:control")
+                )
+        
+        # ═══════════════════════════════════════════════════════════════
+        # ACTION: Sync points only (timestamp-based)
+        # ═══════════════════════════════════════════════════════════════
+        elif action == "points_only":
+            await safe_answer_callback(callback, "💰 Syncing points only...", show_alert=False)
+            
+            try:
+                stats = await sheets_manager.sync_points_only()
+                
+                await safe_edit_message(
+                    callback,
+                    f"✅ POINTS SYNC COMPLETE\n\n"
+                    f"📊 Results:\n"
+                    f"• Updated: {stats.get('updated', 0)} students\n"
+                    f"• Skipped: {stats.get('skipped', 0)} (no changes)\n"
+                    f"• Errors: {stats.get('errors', 0)}\n\n"
+                    f"💰 Only points were synced (timestamp-based).\n"
+                    f"👤 Names were NOT touched.",
+                    reply_markup=keyboards.get_back_keyboard("sync:control")
+                )
+            except Exception as e:
+                await safe_edit_message(
+                    callback,
+                    f"❌ Points sync failed:\n{str(e)}",
+                    reply_markup=keyboards.get_back_keyboard("sync:control")
+                )
+        
+        # ═══════════════════════════════════════════════════════════════
         # ACTION: Force sync from Sheets to Firebase (ignore timestamps)
         # ═══════════════════════════════════════════════════════════════
         elif action == "force_sheets":

@@ -141,11 +141,16 @@ def get_sync_control_keyboard(sync_enabled: bool) -> InlineKeyboardMarkup:
     builder.button(text=toggle_text, callback_data="sync:toggle")
     
     builder.button(text="⏱️ Change Interval", callback_data="sync:interval")
+    
+    # Separate sync buttons
+    builder.button(text="👤 Sync Names Only", callback_data="sync:names_only")
+    builder.button(text="💰 Sync Points Only", callback_data="sync:points_only")
+    
     builder.button(text="📥 Force: Sheets → Firebase", callback_data="sync:force_sheets")
     
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(1, 2, 1)
+    builder.adjust(1, 1, 2, 1, 1)
     
     return builder.as_markup()
 

@@ -669,6 +669,99 @@ class GoogleSheetsManager:
                 stats['errors'] += 1
                 return stats
     
+    async def sync_names_only(self) -> Dict[str, int]:
+        """
+        Sync ONLY names/phones from Sheets to Firebase
+        Points are not touched
+        """
+        async with self.sync_lock:
+            stats = {'updated': 0, 'errors': 0}
+            
+            try:
+                sheets_data = self.fetch_all_data()
+                
+                for row in sheets_data:
+                    user_id = row['user_id']
+                    user = db.get_user(user_id)
+                    
+                    if user:
+                        # Update ONLY names/phones, NOT points
+                        db.update_user(user_id, {
+                            'full_name': row['full_name'],
+                            'phone': row.get('phone', ''),
+                            'username': row.get('username', '')
+                        })
+                        stats['updated'] += 1
+                        print(f"👤 Updated name: {row['full_name']}")
+                
+                print(f"✅ Names sync: {stats['updated']} updated")
+                return stats
+            
+            except Exception as e:
+                print(f"❌ Names sync error: {e}")
+                stats['errors'] += 1
+                return stats
+    
+    async def sync_points_only(self) -> Dict[str, int]:
+        """
+        Sync ONLY points based on timestamp (latest wins)
+        Names are not touched
+        """
+        async with self.sync_lock:
+            stats = {'updated': 0, 'skipped': 0, 'errors': 0}
+            
+            try:
+                sheets_data = self.fetch_all_data()
+                
+                for row in sheets_data:
+                    user_id = row['user_id']
+                    user = db.get_user(user_id)
+                    
+                    if not user:
+                        continue
+                    
+                    sheets_points = row['points']
+                    firebase_points = user.get('points', 0)
+                    
+                    # Check timestamps
+                    sheets_timestamp = self._parse_timestamp(row.get('last_updated', ''))
+                    firebase_timestamp = self._parse_firebase_timestamp(user.get('last_updated'))
+                    
+                    if sheets_points == firebase_points:
+                        stats['skipped'] += 1
+                        continue
+                    
+                    # Compare timestamps
+                    if sheets_timestamp and firebase_timestamp:
+                        if sheets_timestamp > firebase_timestamp:
+                            # Sheets newer - update Firebase
+                            db.update_user(user_id, {'points': sheets_points})
+                            stats['updated'] += 1
+                            print(f"💰 Sheets → Firebase: {user['full_name']} ({firebase_points} → {sheets_points})")
+                        elif firebase_timestamp > sheets_timestamp:
+                            # Firebase newer - update Sheets
+                            self.update_row(user_id, firebase_points)
+                            stats['updated'] += 1
+                            print(f"💰 Firebase → Sheets: {user['full_name']} ({sheets_points} → {firebase_points})")
+                    elif sheets_timestamp:
+                        db.update_user(user_id, {'points': sheets_points})
+                        stats['updated'] += 1
+                    elif firebase_timestamp:
+                        self.update_row(user_id, firebase_points)
+                        stats['updated'] += 1
+                    else:
+                        # No timestamp - use Firebase
+                        self.update_row(user_id, firebase_points)
+                        stats['updated'] += 1
+                
+                print(f"✅ Points sync: {stats['updated']} updated, {stats['skipped']} skipped")
+                return stats
+            
+            except Exception as e:
+                print(f"❌ Points sync error: {e}")
+                stats['errors'] += 1
+                return stats
+    
     async def get_all_users_from_sheets(self) -> List[Dict[str, Any]]:
         """Get all users from Sheets (async wrapper)"""
         return self.fetch_all_data()
