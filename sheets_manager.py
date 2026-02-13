@@ -477,16 +477,22 @@ class GoogleSheetsManager:
         try:
             # Firebase SERVER_TIMESTAMP returns DatetimeWithNanoseconds
             if hasattr(timestamp, 'timestamp'):
-                dt = datetime.fromtimestamp(timestamp.timestamp())
-                # Make UTC-aware
-                return dt.replace(tzinfo=timezone.utc)
+                # Use UTC explicitly
+                dt = datetime.fromtimestamp(timestamp.timestamp(), tz=timezone.utc)
+                return dt
             
             # If it's already a datetime
             if isinstance(timestamp, datetime):
-                # If it has timezone info, convert to UTC
+                # If it has timezone info
                 if timestamp.tzinfo is not None:
-                    # Convert to UTC (handles any timezone)
-                    return timestamp.astimezone(timezone.utc)
+                    # If already UTC, return as-is
+                    if timestamp.tzinfo == timezone.utc:
+                        return timestamp
+                    # Otherwise convert to UTC
+                    utc_dt = timestamp.astimezone(timezone.utc)
+                    # Remove timezone and re-add to avoid DST issues
+                    naive_utc = utc_dt.replace(tzinfo=None)
+                    return naive_utc.replace(tzinfo=timezone.utc)
                 # If naive (no timezone), assume it's already UTC
                 return timestamp.replace(tzinfo=timezone.utc)
             
