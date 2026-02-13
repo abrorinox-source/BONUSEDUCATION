@@ -483,10 +483,12 @@ class GoogleSheetsManager:
             
             # If it's already a datetime
             if isinstance(timestamp, datetime):
-                # Make sure it's UTC-aware
-                if timestamp.tzinfo is None:
-                    return timestamp.replace(tzinfo=timezone.utc)
-                return timestamp
+                # If it has timezone info, convert to UTC
+                if timestamp.tzinfo is not None:
+                    # Convert to UTC (handles any timezone)
+                    return timestamp.astimezone(timezone.utc)
+                # If naive (no timezone), assume it's already UTC
+                return timestamp.replace(tzinfo=timezone.utc)
             
             # If it's a string
             if isinstance(timestamp, str):
