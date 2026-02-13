@@ -548,8 +548,13 @@ class GoogleSheetsManager:
                     user = db.get_user(user_id)
                     
                     if user:
-                        # Update existing
-                        db.update_user(user_id, {'points': row['points']})
+                        # Update existing - sync ALL fields from Sheets
+                        db.update_user(user_id, {
+                            'full_name': row['full_name'],
+                            'phone': row.get('phone', ''),
+                            'username': row.get('username', ''),
+                            'points': row['points']
+                        })
                         stats['updated'] += 1
                     else:
                         # Add new
