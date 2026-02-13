@@ -434,14 +434,17 @@ class GoogleSheetsManager:
                 return stats
     
     def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
-        """Parse Sheets timestamp string to datetime"""
+        """Parse Sheets timestamp string to datetime (UTC-aware)"""
         if not timestamp_str:
             return None
         
         try:
+            # Clean up timestamp string (remove extra spaces, etc)
+            timestamp_str = str(timestamp_str).strip()
+            
             # Try multiple formats (including European/Russian formats)
             formats = [
-                '%Y-%m-%d %H:%M:%S',       # 2025-01-10 14:30:45 (Expected format)
+                '%Y-%m-%d %H:%M:%S',       # 2026-02-13 20:33:48 (Standard format)
                 '%Y-%m-%d %H:%M:%S.%f',    # With microseconds
                 '%Y-%m-%d',                # Date only
                 '%d/%m/%Y %H:%M:%S',       # European: 10/01/2025 14:30:45
@@ -453,28 +456,36 @@ class GoogleSheetsManager:
             
             for fmt in formats:
                 try:
-                    return datetime.strptime(timestamp_str, fmt)
+                    # Parse and make UTC-aware
+                    dt = datetime.strptime(timestamp_str, fmt)
+                    # Assume parsed timestamp is UTC
+                    return dt.replace(tzinfo=timezone.utc)
                 except ValueError:
                     continue
             
             print(f"⚠️ Could not parse timestamp '{timestamp_str}' with any known format")
             return None
         except Exception as e:
-            print(f"Error parsing timestamp '{timestamp_str}': {e}")
+            print(f"❌ Error parsing timestamp '{timestamp_str}': {e}")
             return None
     
     def _parse_firebase_timestamp(self, timestamp) -> Optional[datetime]:
-        """Parse Firebase timestamp to datetime"""
+        """Parse Firebase timestamp to datetime (UTC-aware)"""
         if not timestamp:
             return None
         
         try:
             # Firebase SERVER_TIMESTAMP returns DatetimeWithNanoseconds
             if hasattr(timestamp, 'timestamp'):
-                return datetime.fromtimestamp(timestamp.timestamp())
+                dt = datetime.fromtimestamp(timestamp.timestamp())
+                # Make UTC-aware
+                return dt.replace(tzinfo=timezone.utc)
             
             # If it's already a datetime
             if isinstance(timestamp, datetime):
+                # Make sure it's UTC-aware
+                if timestamp.tzinfo is None:
+                    return timestamp.replace(tzinfo=timezone.utc)
                 return timestamp
             
             # If it's a string
@@ -483,7 +494,7 @@ class GoogleSheetsManager:
             
             return None
         except Exception as e:
-            print(f"Error parsing Firebase timestamp: {e}")
+            print(f"❌ Error parsing Firebase timestamp: {e}")
             return None
     
     async def sync_firebase_to_sheets(self) -> Dict[str, int]:
