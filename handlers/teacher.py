@@ -56,19 +56,20 @@ async def safe_answer_callback(callback: CallbackQuery, text: str = None, show_a
 
 @router.message(F.text.contains("Force Sync"))
 async def force_sync(message: Message):
-    """Force manual sync - syncs ALL fields from Sheets to Firebase"""
-    await message.answer("⏳ Synchronizing with Google Sheets...\n🔄 Updating all student data (names, phones, points)...")
+    """Force manual sync - bidirectional smart sync with timestamp comparison"""
+    await message.answer("⏳ Synchronizing with Google Sheets...\n🔄 Smart bidirectional sync (timestamp-based)...")
     
-    # Perform full sync from Sheets to Firebase (updates ALL fields)
-    stats = await sheets_manager.sync_sheets_to_firebase()
+    # Perform smart delta sync (bidirectional, timestamp-based)
+    stats = await sheets_manager.smart_delta_sync()
     
     result_text = (
         f"✅ Sync complete!\n"
-        f"📊 All data updated from Google Sheets:\n"
+        f"📊 Bidirectional sync (latest wins):\n"
         f"• Updated: {stats['updated']} students\n"
         f"• Added: {stats['added']} new students\n"
+        f"• Skipped: {stats.get('skipped', 0)} (no changes)\n"
         f"• Errors: {stats['errors']}\n\n"
-        f"ℹ️ Names, phones, usernames, and points are now synced!"
+        f"ℹ️ Latest data wins (timestamp-based)!"
     )
     
     await message.answer(result_text)
