@@ -434,7 +434,7 @@ class GoogleSheetsManager:
                 return stats
     
     def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
-        """Parse Sheets timestamp string to datetime (UTC-aware)"""
+        """Parse Sheets timestamp string to datetime (assumes local timezone UTC+5, converts to UTC)"""
         if not timestamp_str:
             return None
         
@@ -456,10 +456,16 @@ class GoogleSheetsManager:
             
             for fmt in formats:
                 try:
-                    # Parse and make UTC-aware
+                    # Parse the timestamp
                     dt = datetime.strptime(timestamp_str, fmt)
-                    # Assume parsed timestamp is UTC
-                    return dt.replace(tzinfo=timezone.utc)
+                    
+                    # Sheets timestamps are in LOCAL timezone (UTC+5 for Toshkent/Uzbekistan)
+                    # Convert from local to UTC by subtracting 5 hours
+                    from datetime import timedelta
+                    utc_dt = dt - timedelta(hours=5)
+                    
+                    # Make UTC-aware
+                    return utc_dt.replace(tzinfo=timezone.utc)
                 except ValueError:
                     continue
             
