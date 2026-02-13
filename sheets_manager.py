@@ -571,24 +571,36 @@ class GoogleSheetsManager:
                         # For POINTS - check timestamps (latest wins)
                         sheets_points = row['points']
                         firebase_points = user.get('points', 0)
-                        sheets_timestamp = self._parse_timestamp(row.get('last_updated', ''))
-                        firebase_timestamp = self._parse_firebase_timestamp(user.get('last_updated'))
+                        sheets_timestamp_str = row.get('last_updated', '')
+                        firebase_timestamp_raw = user.get('last_updated')
+                        
+                        sheets_timestamp = self._parse_timestamp(sheets_timestamp_str)
+                        firebase_timestamp = self._parse_firebase_timestamp(firebase_timestamp_raw)
+                        
+                        # DEBUG: Show raw and parsed timestamps
+                        print(f"\n👤 User: {user['full_name']} (ID: {user_id})")
+                        print(f"   📄 Sheets: {sheets_points} pts | Timestamp: '{sheets_timestamp_str}' → {sheets_timestamp}")
+                        print(f"   🔥 Firebase: {firebase_points} pts | Timestamp: {firebase_timestamp_raw} → {firebase_timestamp}")
                         
                         # Compare timestamps for points only
                         if sheets_timestamp and firebase_timestamp:
                             if sheets_timestamp > firebase_timestamp:
                                 # Sheets is newer - use Sheets points
                                 update_data['points'] = sheets_points
-                                print(f"📊 Points from Sheets (newer): {user['full_name']} = {sheets_points}")
+                                print(f"   ✅ SHEETS WINS! ({sheets_timestamp} > {firebase_timestamp})")
+                                print(f"   📊 Points: {firebase_points} → {sheets_points}")
                             else:
                                 # Firebase is newer or equal - keep Firebase points
-                                print(f"📊 Points from Firebase (newer): {user['full_name']} = {firebase_points}")
+                                print(f"   ✅ FIREBASE WINS! ({firebase_timestamp} >= {sheets_timestamp})")
+                                print(f"   📊 Points: {sheets_points} → {firebase_points} (no change)")
                         elif sheets_timestamp:
                             # Only Sheets has timestamp - use Sheets points
                             update_data['points'] = sheets_points
+                            print(f"   ⚠️ Only Sheets has timestamp - using Sheets points: {sheets_points}")
                         else:
                             # No reliable timestamp - use Sheets points as default
                             update_data['points'] = sheets_points
+                            print(f"   ⚠️ No reliable timestamps - defaulting to Sheets points: {sheets_points}")
                         
                         db.update_user(user_id, update_data)
                         stats['updated'] += 1
