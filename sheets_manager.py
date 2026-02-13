@@ -533,8 +533,9 @@ class GoogleSheetsManager:
     
     async def sync_sheets_to_firebase(self) -> Dict[str, int]:
         """
-        One-way sync: Sheets → Firebase
-        Force all Sheets data to Firebase
+        Hybrid sync: Sheets → Firebase
+        - Names/phones from Sheets (always win)
+        - Points based on timestamp (latest wins)
         """
         async with self.sync_lock:
             stats = {'updated': 0, 'added': 0, 'errors': 0}
@@ -548,16 +549,40 @@ class GoogleSheetsManager:
                     user = db.get_user(user_id)
                     
                     if user:
-                        # Update existing - sync ALL fields from Sheets
-                        db.update_user(user_id, {
+                        # Update existing user
+                        # ALWAYS update names/phones from Sheets
+                        update_data = {
                             'full_name': row['full_name'],
                             'phone': row.get('phone', ''),
-                            'username': row.get('username', ''),
-                            'points': row['points']
-                        })
+                            'username': row.get('username', '')
+                        }
+                        
+                        # For POINTS - check timestamps (latest wins)
+                        sheets_points = row['points']
+                        firebase_points = user.get('points', 0)
+                        sheets_timestamp = self._parse_timestamp(row.get('last_updated', ''))
+                        firebase_timestamp = self._parse_firebase_timestamp(user.get('last_updated'))
+                        
+                        # Compare timestamps for points only
+                        if sheets_timestamp and firebase_timestamp:
+                            if sheets_timestamp > firebase_timestamp:
+                                # Sheets is newer - use Sheets points
+                                update_data['points'] = sheets_points
+                                print(f"📊 Points from Sheets (newer): {user['full_name']} = {sheets_points}")
+                            else:
+                                # Firebase is newer or equal - keep Firebase points
+                                print(f"📊 Points from Firebase (newer): {user['full_name']} = {firebase_points}")
+                        elif sheets_timestamp:
+                            # Only Sheets has timestamp - use Sheets points
+                            update_data['points'] = sheets_points
+                        else:
+                            # No reliable timestamp - use Sheets points as default
+                            update_data['points'] = sheets_points
+                        
+                        db.update_user(user_id, update_data)
                         stats['updated'] += 1
                     else:
-                        # Add new
+                        # Add new user from Sheets
                         db.create_user(user_id, {
                             'full_name': row['full_name'],
                             'phone': row.get('phone', ''),
@@ -568,7 +593,7 @@ class GoogleSheetsManager:
                         })
                         stats['added'] += 1
                 
-                print(f"✅ Sheets → Firebase sync: {stats['updated']} updated, {stats['added']} added")
+                print(f"✅ Hybrid sync: {stats['updated']} updated, {stats['added']} added")
                 return stats
             
             except Exception as e:
