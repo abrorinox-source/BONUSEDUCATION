@@ -8,7 +8,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from typing import List, Dict, Any, Optional
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import config
 from database import db
 import os
@@ -118,7 +118,7 @@ class GoogleSheetsManager:
             
             # Update the points column (E) and last_updated (F)
             range_name = f'Sheet1!E{row_index}:F{row_index}'
-            values = [[points, datetime.now().strftime('%Y-%m-%d %H:%M:%S')]]
+            values = [[points, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')]]
             
             body = {'values': values}
             
@@ -162,7 +162,7 @@ class GoogleSheetsManager:
                 user_data.get('phone', ''),
                 user_data.get('username', ''),
                 user_data.get('points', 0),
-                datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             ]]
             
             body = {'values': values}
@@ -234,7 +234,7 @@ class GoogleSheetsManager:
                     update['phone'],
                     update['username'],
                     update['points'],
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
                 ]
                 
                 data.append({
@@ -403,7 +403,7 @@ class GoogleSheetsManager:
                 sync_stats['successful_syncs'] = sync_stats.get('successful_syncs', 0) + 1
                 
                 db.update_settings({
-                    'last_sync_time': datetime.now().isoformat(),
+                    'last_sync_time': datetime.now(timezone.utc).isoformat(),
                     'sync_statistics': sync_stats
                 })
                 
