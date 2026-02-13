@@ -352,43 +352,74 @@ class GoogleSheetsManager:
                     # Points are different - check which is newer
                     if sheets_timestamp and firebase_timestamp:
                         if sheets_timestamp > firebase_timestamp:
-                            # Sheets is newer - update Firebase
-                            db.update_user(user_id, {'points': sheets_points})
+                            # Sheets is newer - update Firebase (points + names from Sheets)
+                            db.update_user(user_id, {
+                                'points': sheets_points,
+                                'full_name': row['full_name'],
+                                'phone': row.get('phone', ''),
+                                'username': row.get('username', '')
+                            })
                             db.log_manual_edit(user_id, user_name, firebase_points, sheets_points)
                             stats['updated'] += 1
                             print(f"✅ Sheets → Firebase: {user_name} ({firebase_points} → {sheets_points})")
                         
                         elif firebase_timestamp > sheets_timestamp:
-                            # Firebase is newer - update Sheets
+                            # Firebase is newer - update Sheets points, but update names from Sheets anyway
                             self.update_row(user_id, firebase_points)
+                            # Also update names from Sheets (names always from Sheets)
+                            db.update_user(user_id, {
+                                'full_name': row['full_name'],
+                                'phone': row.get('phone', ''),
+                                'username': row.get('username', '')
+                            })
                             stats['updated'] += 1
-                            print(f"✅ Firebase → Sheets: {user_name} ({sheets_points} → {firebase_points})")
+                            print(f"✅ Firebase → Sheets (points), Sheets → Firebase (names): {user_name}")
                         
                         else:
                             # Same timestamp but different points (conflict)
-                            # Use Firebase as source of truth
+                            # Use Firebase points, Sheets names
                             self.update_row(user_id, firebase_points)
+                            db.update_user(user_id, {
+                                'full_name': row['full_name'],
+                                'phone': row.get('phone', ''),
+                                'username': row.get('username', '')
+                            })
                             stats['updated'] += 1
-                            print(f"⚠️ Conflict resolved (Firebase wins): {user_name} → {firebase_points}")
+                            print(f"⚠️ Conflict resolved (Firebase points, Sheets names): {user_name} → {firebase_points}")
                     
                     elif sheets_timestamp:
-                        # Only Sheets has timestamp - use Sheets
-                        db.update_user(user_id, {'points': sheets_points})
+                        # Only Sheets has timestamp - use Sheets data
+                        db.update_user(user_id, {
+                            'points': sheets_points,
+                            'full_name': row['full_name'],
+                            'phone': row.get('phone', ''),
+                            'username': row.get('username', '')
+                        })
                         db.log_manual_edit(user_id, user_name, firebase_points, sheets_points)
                         stats['updated'] += 1
                         print(f"✅ Sheets → Firebase: {user_name} ({firebase_points} → {sheets_points})")
                     
                     elif firebase_timestamp:
-                        # Only Firebase has timestamp - use Firebase
+                        # Only Firebase has timestamp - use Firebase points, Sheets names
                         self.update_row(user_id, firebase_points)
+                        db.update_user(user_id, {
+                            'full_name': row['full_name'],
+                            'phone': row.get('phone', ''),
+                            'username': row.get('username', '')
+                        })
                         stats['updated'] += 1
-                        print(f"✅ Firebase → Sheets: {user_name} ({sheets_points} → {firebase_points})")
+                        print(f"✅ Firebase → Sheets (points), Sheets → Firebase (names): {user_name}")
                     
                     else:
-                        # No timestamps - use Firebase as source of truth
+                        # No timestamps - use Firebase points, Sheets names
                         self.update_row(user_id, firebase_points)
+                        db.update_user(user_id, {
+                            'full_name': row['full_name'],
+                            'phone': row.get('phone', ''),
+                            'username': row.get('username', '')
+                        })
                         stats['updated'] += 1
-                        print(f"⚠️ No timestamps, using Firebase: {user_name} → {firebase_points}")
+                        print(f"⚠️ No timestamps, using Firebase points, Sheets names: {user_name} → {firebase_points}")
                 
                 # Update sync statistics
                 settings = db.get_settings()
