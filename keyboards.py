@@ -379,43 +379,42 @@ def get_edit_rules_keyboard() -> InlineKeyboardMarkup:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_groups_management_keyboard(teacher_id: str) -> InlineKeyboardMarkup:
-    """Groups management main menu"""
+    """Groups management main menu with refresh"""
     from database import db
     
     builder = InlineKeyboardBuilder()
     
     groups = db.get_teacher_groups(teacher_id)
     
-    if groups:
-        builder.button(text="📋 View All Groups", callback_data="groups:list")
+    # Show group count
+    group_count = len(groups) if groups else 0
+    builder.button(text=f"📁 Groups ({group_count})", callback_data="groups:list")
     
-    builder.button(text="➕ Create New Group", callback_data="groups:create")
-    builder.button(text="🔄 Switch Active Group", callback_data="groups:switch")
+    # Refresh button to re-scan Google Sheets tabs
+    builder.button(text="🔄 Refresh Groups", callback_data="groups:refresh")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    if groups:
-        builder.adjust(1, 1, 1, 1)
-    else:
-        builder.adjust(1, 1, 1)
+    builder.adjust(1, 1, 1)
     
     return builder.as_markup()
 
 
 def get_groups_list_keyboard(groups: List[Dict[str, Any]], action: str = "view") -> InlineKeyboardMarkup:
-    """List of groups keyboard"""
+    """List of groups keyboard with student counts and refresh"""
     builder = InlineKeyboardBuilder()
     
     for group in groups:
         group_id = group.get('group_id', '')
         name = group.get('name', 'Unknown')
-        sheet_name = group.get('sheet_name', '')
+        student_count = len(db.get_all_users(role='student', status='active', group_id=group_id))
         
         builder.button(
-            text=f"📚 {name} ({sheet_name})",
+            text=f"📚 {name} ({student_count} students)",
             callback_data=f"group_{action}:{group_id}"
         )
     
-    builder.button(text="➕ Create New Group", callback_data="groups:create")
+    # Refresh button at the bottom
+    builder.button(text="🔄 Refresh Groups", callback_data="groups:refresh")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:groups")
     
     builder.adjust(1)
