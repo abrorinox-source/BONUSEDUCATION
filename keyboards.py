@@ -338,6 +338,22 @@ def get_broadcast_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_group_selection_keyboard(groups: list, action: str) -> InlineKeyboardMarkup:
+    """Group selection keyboard for various actions (rating, etc.)"""
+    builder = InlineKeyboardBuilder()
+    
+    for group in groups:
+        student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
+        builder.button(
+            text=f"📁 {group['name']} ({student_count} students)",
+            callback_data=f"{action}:group:{group['group_id']}"
+        )
+    
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+
 def get_edit_rules_keyboard() -> InlineKeyboardMarkup:
     """Edit rules keyboard"""
     builder = InlineKeyboardBuilder()

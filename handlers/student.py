@@ -60,15 +60,27 @@ async def start_transfer(message: Message):
 
 @router.message(F.text.contains("Rating"))
 async def show_rating_student(message: Message, user: dict):
-    """Show overall ranking (student view)"""
+    """Show ranking for student's own group"""
     user_id = str(message.from_user.id)
-    ranking = db.get_ranking()
+    student = db.get_user(user_id)
+    group_id = student.get('group_id')
     
-    if not ranking:
-        await message.answer("📊 No students found.")
+    if not group_id:
+        await message.answer("❌ You are not assigned to any group yet.")
         return
     
-    text = "🏆 OVERALL RANKING\n"
+    # Get group info
+    group = db.get_group(group_id)
+    group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+    
+    # Get ranking for this group only
+    ranking = db.get_ranking(group_id=group_id)
+    
+    if not ranking:
+        await message.answer(f"📊 No students found in {group_name}.")
+        return
+    
+    text = f"🏆 {group_name.upper()} RANKING\n\n"
     
     for i, student in enumerate(ranking[:20], 1):
         emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
@@ -81,7 +93,6 @@ async def show_rating_student(message: Message, user: dict):
         
         text += f"{emoji} {name} - {student['points']} pts\n"
     
-    text += "\n"
     text += f"\nTotal Students: {len(ranking)}"
     
     await message.answer(text, parse_mode="Markdown", reply_markup=keyboards.get_ranking_keyboard("student"))

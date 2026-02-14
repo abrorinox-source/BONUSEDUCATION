@@ -77,22 +77,22 @@ async def force_sync(message: Message):
 
 @router.message(F.text.contains("Rating"))
 async def show_rating_teacher(message: Message):
-    """Show overall ranking"""
-    ranking = db.get_ranking()
+    """Show group selection for rating"""
+    teacher_id = str(message.from_user.id)
+    groups = db.get_teacher_groups(teacher_id)
     
-    if not ranking:
-        await message.answer("📊 No students found.")
+    if not groups:
+        await message.answer(
+            "❌ You don't have any groups yet.\n"
+            "Create a group in Settings → Manage Groups first."
+        )
         return
     
-    text = "🏆 OVERALL RANKING\n\n"
-    
-    for i, student in enumerate(ranking[:20], 1):
-        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        text += f"{emoji} {student['full_name']} - {student['points']} pts\n"
-    
-    text += f"\nTotal Students: {len(ranking)}"
-    
-    await message.answer(text, reply_markup=keyboards.get_ranking_keyboard("teacher"))
+    await message.answer(
+        "🏆 SELECT GROUP TO VIEW RATING\n\n"
+        "Choose a group:",
+        reply_markup=keyboards.get_group_selection_keyboard(groups, "rating")
+    )
 
 
 @router.message(F.text.contains("Students"))
@@ -437,6 +437,42 @@ async def back_to_students_list(callback: CallbackQuery):
         f"👤 STUDENTS ({len(students)})\n"
         f"Select a student to manage:",
         reply_markup=keyboards.get_students_list_keyboard(students)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rating:group:"))
+async def show_group_rating(callback: CallbackQuery):
+    """Show ranking for selected group"""
+    group_id = callback.data.split(":")[2]
+    
+    # Get group info
+    group = db.get_group(group_id)
+    if not group:
+        await callback.answer("❌ Group not found!", show_alert=True)
+        return
+    
+    # Get ranking for this group
+    ranking = db.get_ranking(group_id=group_id)
+    
+    if not ranking:
+        await callback.message.edit_text(
+            f"📊 No students found in {group['name']}.",
+            reply_markup=keyboards.get_back_keyboard("teacher:menu")
+        )
+        return
+    
+    text = f"🏆 {group['name'].upper()} RANKING\n\n"
+    
+    for i, student in enumerate(ranking[:20], 1):
+        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        text += f"{emoji} {student['full_name']} - {student['points']} pts\n"
+    
+    text += f"\nTotal Students: {len(ranking)}"
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboards.get_ranking_keyboard("teacher")
     )
     await callback.answer()
 
