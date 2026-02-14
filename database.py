@@ -469,14 +469,51 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
-    def get_teacher_groups(self, teacher_id: str = None) -> List[Dict[str, Any]]:
-        """Get all groups from Google Sheets tabs (auto-detect)
-        
-        Now reads directly from Google Sheets tabs instead of Firebase.
-        teacher_id kept for compatibility but not used - all teachers see all sheets.
-        """
+    def refresh_groups_cache(self) -> List[Dict[str, Any]]:
+        """Refresh groups cache from Google Sheets"""
         from sheets_manager import sheets_manager
-        return sheets_manager.get_groups_from_sheets()
+        groups = sheets_manager.get_groups_from_sheets()
+        
+        # Save to settings as cache
+        try:
+            from google.cloud.firestore import SERVER_TIMESTAMP
+            self.settings_ref.document('groups_cache').set({
+                'groups': groups,
+                'last_updated': SERVER_TIMESTAMP
+            })
+            print(f"✅ Cached {len(groups)} groups")
+        except Exception as e:
+            print(f"⚠️ Failed to cache groups: {e}")
+        
+        return groups
+    
+    def get_teacher_groups(self, teacher_id: str = None, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        """Get all groups (from cache or refresh from Sheets)
+        
+        Args:
+            teacher_id: Not used, kept for compatibility
+            force_refresh: If True, bypass cache and fetch from Sheets
+        
+        Returns cached groups for speed, unless force_refresh=True
+        """
+        if force_refresh:
+            return self.refresh_groups_cache()
+        
+        # Try to get from cache first
+        try:
+            cache_doc = self.settings_ref.document('groups_cache').get()
+            if cache_doc.exists:
+                cached_data = cache_doc.to_dict()
+                groups = cached_data.get('groups', [])
+                if groups:
+                    print(f"✅ Using cached groups ({len(groups)} groups)")
+                    return groups
+        except Exception as e:
+            print(f"⚠️ Cache read failed: {e}")
+        
+        # No cache, refresh from Sheets
+        print("📊 No cache found, fetching from Sheets...")
+        return self.refresh_groups_cache()
 
 
 # Global database instance

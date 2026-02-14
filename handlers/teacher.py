@@ -1873,9 +1873,9 @@ async def handle_groups_actions(callback: CallbackQuery, state: FSMContext):
         await safe_answer_callback(callback)
     
     elif action == "refresh":
-        # Refresh groups by re-scanning Google Sheets
+        # Refresh groups by re-scanning Google Sheets and updating cache
         teacher_id = str(callback.from_user.id)
-        groups = db.get_teacher_groups(teacher_id)  # This will fetch fresh data from Sheets
+        groups = db.get_teacher_groups(teacher_id, force_refresh=True)  # Force refresh from Sheets
         
         text = "👥 GROUP MANAGEMENT\n\n"
         if groups:

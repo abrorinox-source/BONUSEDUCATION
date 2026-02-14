@@ -379,20 +379,21 @@ def get_edit_rules_keyboard() -> InlineKeyboardMarkup:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_groups_management_keyboard(teacher_id: str) -> InlineKeyboardMarkup:
-    """Groups management main menu with refresh"""
+    """Groups management main menu with refresh at bottom"""
     from database import db
     
     builder = InlineKeyboardBuilder()
     
-    groups = db.get_teacher_groups(teacher_id)
+    groups = db.get_teacher_groups(teacher_id)  # From cache (fast!)
     
     # Show group count
     group_count = len(groups) if groups else 0
     builder.button(text=f"📁 Groups ({group_count})", callback_data="groups:list")
     
-    # Refresh button to re-scan Google Sheets tabs
-    builder.button(text="🔄 Refresh Groups", callback_data="groups:refresh")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
+    
+    # Refresh button at the bottom
+    builder.button(text="🔄 Refresh Groups", callback_data="groups:refresh")
     
     builder.adjust(1, 1, 1)
     
