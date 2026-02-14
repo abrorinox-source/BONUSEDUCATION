@@ -113,17 +113,37 @@ async def show_rating_teacher(message: Message):
 
 @router.message(F.text.contains("Students"))
 async def show_students(message: Message):
-    """Show students list"""
-    students = db.get_all_users(role='student', status='active')
+    """Show group selection for students list"""
+    teacher_id = str(message.from_user.id)
+    groups = db.get_teacher_groups(teacher_id)
     
-    if not students:
-        await message.answer("👤 No active students found.")
+    if not groups:
+        await message.answer("❌ No groups found. Create a group first in Settings → Manage Groups.")
         return
     
+    # Build keyboard with all groups + "All Students" option
+    builder = InlineKeyboardBuilder()
+    
+    # Add individual groups
+    for group in groups:
+        student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
+        builder.button(
+            text=f"📁 {group['name']} ({student_count} students)",
+            callback_data=f"students:group:{group['group_id']}"
+        )
+    
+    # Add "All Students" option
+    builder.button(
+        text="👥 All Students",
+        callback_data="students:all"
+    )
+    
+    builder.adjust(1)
+    
     await message.answer(
-        f"👤 STUDENTS ({len(students)})\n"
-        f"Select a student to manage:",
-        reply_markup=keyboards.get_students_list_keyboard(students)
+        "👤 SELECT GROUP TO VIEW STUDENTS\n\n"
+        "Choose a group:",
+        reply_markup=builder.as_markup()
     )
 
 
@@ -441,6 +461,54 @@ async def cancel_action(callback: CallbackQuery, state: FSMContext):
     """Cancel current action"""
     await state.clear()
     await callback.message.edit_text("❌ Action cancelled.")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "students:all")
+async def show_all_students(callback: CallbackQuery):
+    """Show all students (no group filter)"""
+    students = db.get_all_users(role='student', status='active')
+    
+    if not students:
+        await callback.message.edit_text("👤 No active students found.")
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        f"👤 ALL STUDENTS ({len(students)})\n"
+        f"Select a student to manage:",
+        reply_markup=keyboards.get_students_list_keyboard(students)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("students:group:"))
+async def show_group_students(callback: CallbackQuery):
+    """Show students from a specific group"""
+    group_id = callback.data.split(":")[2]
+    
+    # Get group info
+    group = db.get_group(group_id)
+    if not group:
+        await callback.answer("❌ Group not found!", show_alert=True)
+        return
+    
+    # Get students in this group
+    students = db.get_all_users(role='student', status='active', group_id=group_id)
+    
+    if not students:
+        await callback.message.edit_text(
+            f"👤 No students found in {group['name']}.",
+            reply_markup=keyboards.get_back_keyboard("teacher:menu")
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        f"👤 {group['name'].upper()} STUDENTS ({len(students)})\n"
+        f"Select a student to manage:",
+        reply_markup=keyboards.get_students_list_keyboard(students)
+    )
     await callback.answer()
 
 
