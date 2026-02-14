@@ -2031,11 +2031,58 @@ async def handle_group_edit(callback: CallbackQuery, state: FSMContext):
         f"(Both group name and Google Sheets tab will be updated)"
     )
     
-    await state.update_data(editing_group_id=group_id)
+    await state.update_data(editing_group_id=group_id, old_sheet_name=group['sheet_name'])
     await state.set_state(GroupStates.waiting_for_edit_name)
 
 
-Tool call argument 'replace' pruned from message history.
+@router.message(GroupStates.waiting_for_edit_name)
+async def process_group_edit(message: Message, state: FSMContext):
+    """Process sheet name edit - updates both Firebase and Google Sheets"""
+    new_name = message.text.strip()
+    
+    if len(new_name) < 2 or len(new_name) > 50:
+        await message.answer("❌ Name must be between 2 and 50 characters. Try again:")
+        return
+    
+    data = await state.get_data()
+    group_id = data.get('editing_group_id')
+    old_sheet_name = data.get('old_sheet_name')
+    
+    # Rename Google Sheets tab first
+    rename_success = sheets_manager.rename_sheet_tab(old_sheet_name, new_name)
+    
+    if not rename_success:
+        await message.answer(
+            f"❌ Failed to rename Google Sheets tab.\n"
+            f"Please make sure the sheet '{old_sheet_name}' exists.",
+            reply_markup=keyboards.get_teacher_keyboard()
+        )
+        await state.clear()
+        return
+    
+    # Update both name and sheet_name in Firebase
+    db_success = db.update_group(group_id, {
+        'name': new_name,
+        'sheet_name': new_name
+    })
+    
+    if db_success:
+        await message.answer(
+            f"✅ Sheet renamed successfully!\n\n"
+            f"Old: {old_sheet_name}\n"
+            f"New: {new_name}\n\n"
+            f"Both database and Google Sheets have been updated! 🎉",
+            reply_markup=keyboards.get_teacher_keyboard()
+        )
+    else:
+        # Rollback - rename back
+        sheets_manager.rename_sheet_tab(new_name, old_sheet_name)
+        await message.answer(
+            f"❌ Failed to update database. Changes rolled back.",
+            reply_markup=keyboards.get_teacher_keyboard()
+        )
+    
+    await state.clear()
 
 
 @router.callback_query(F.data.startswith("group_delete:"))
