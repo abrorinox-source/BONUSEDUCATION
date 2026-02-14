@@ -470,28 +470,24 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
-    def get_teacher_groups(self, teacher_id: str) -> List[Dict[str, Any]]:
-        """Get all groups for a teacher (includes global default group + teacher's own groups)"""
+    def get_teacher_groups(self, teacher_id: str = None) -> List[Dict[str, Any]]:
+        """Get ALL active groups (shared environment - all teachers see all groups)
+        
+        teacher_id parameter kept for API compatibility but not used.
+        All teachers work in same environment and see all groups.
+        """
         try:
+            # Get ALL active groups (no teacher filter - shared environment)
+            query = self.groups_ref.where('status', '==', 'active')
             groups = []
-            
-            # Get global default group (Sheet1) - visible to ALL teachers
-            global_query = self.groups_ref.where('teacher_id', '==', 'global').where('status', '==', 'active')
-            for doc in global_query.stream():
-                group_data = doc.to_dict()
-                group_data['group_id'] = doc.id
-                groups.append(group_data)
-            
-            # Get teacher's own groups
-            teacher_query = self.groups_ref.where('teacher_id', '==', teacher_id).where('status', '==', 'active')
-            for doc in teacher_query.stream():
+            for doc in query.stream():
                 group_data = doc.to_dict()
                 group_data['group_id'] = doc.id
                 groups.append(group_data)
             
             return groups
         except Exception as e:
-            print(f"Error getting teacher groups: {e}")
+            print(f"Error getting groups: {e}")
             return []
 
 

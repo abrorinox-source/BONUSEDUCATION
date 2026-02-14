@@ -130,8 +130,8 @@ async def process_teacher_code(message: Message, state: FSMContext):
         
         db.create_user(user_id, teacher_data)
         
-        # Check if global default group exists (Sheet1)
-        # This should be created only once for ALL teachers
+        # Check if default group exists (Sheet1)
+        # All groups are shared, so no need for special 'global' marker
         all_groups = db.groups_ref.where('sheet_name', '==', 'Sheet1').limit(1).stream()
         default_exists = False
         for _ in all_groups:
@@ -139,16 +139,17 @@ async def process_teacher_code(message: Message, state: FSMContext):
             break
         
         if not default_exists:
-            # Create global default group (shared by all teachers)
+            # Create default group (shared by ALL teachers)
+            from google.cloud.firestore import SERVER_TIMESTAMP
             default_group = {
                 'name': 'Main Group',
                 'sheet_name': 'Sheet1',
-                'teacher_id': 'global',  # Special marker for shared group
+                'teacher_id': user_id,  # Creator ID (but all teachers can manage)
                 'status': 'active',
-                'created_at': db.get_timestamp()
+                'created_at': SERVER_TIMESTAMP
             }
             db.create_group(default_group)
-            print(f"✅ Created global default group 'Main Group' (Sheet1)")
+            print(f"✅ Created default group 'Main Group' (Sheet1)")
         
         await message.answer(
             "✅ Welcome, Teacher!",
