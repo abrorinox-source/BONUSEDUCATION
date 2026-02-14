@@ -469,7 +469,7 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
-    def update_students_group_names(self, old_to_new_mapping: Dict[str, str]) -> int:
+    def update_students_group_names(self, old_groups: List[Dict], new_groups: List[Dict]) -> int:
         """Update student group_id when sheet names change
         
         Args:
