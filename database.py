@@ -469,6 +469,30 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
+    def update_students_group_names(self, old_to_new_mapping: Dict[str, str]) -> int:
+        """Update student group_id when sheet names change
+        
+        Args:
+            old_to_new_mapping: Dict of {old_name: new_name}
+        Returns:
+            Number of students updated
+        """
+        updated_count = 0
+        try:
+            for old_name, new_name in old_to_new_mapping.items():
+                students = self.get_all_users(role='student', group_id=old_name)
+                for student in students:
+                    self.update_user(student['user_id'], {'group_id': new_name})
+                    updated_count += 1
+                    print(f"  ✅ {student.get('full_name')} → {new_name}")
+            
+            if updated_count > 0:
+                print(f"✅ Updated {updated_count} students' group names")
+            return updated_count
+        except Exception as e:
+            print(f"⚠️ Error updating student groups: {e}")
+            return 0
+    
     def refresh_groups_cache(self) -> List[Dict[str, Any]]:
         """Refresh groups cache from Google Sheets"""
         from sheets_manager import sheets_manager
