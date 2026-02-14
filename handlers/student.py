@@ -21,15 +21,25 @@ router = Router()
 
 @router.message(F.text.contains("My Rank"))
 async def show_my_rank(message: Message, user: dict):
-    """Show personal rank and stats"""
+    """Show personal rank and stats within student's group"""
     user_id = str(message.from_user.id)
+    group_id = user.get('group_id')
     
-    # Get ranking
-    ranking = db.get_ranking()
+    if not group_id:
+        await message.answer("❌ You are not assigned to any group yet.")
+        return
+    
+    # Get group info
+    group = db.get_group(group_id)
+    group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+    
+    # Get ranking for student's group only
+    ranking = db.get_ranking(group_id=group_id)
     rank = next((i + 1 for i, u in enumerate(ranking) if u['user_id'] == user_id), 0)
     
     text = (
         f"🏆 YOUR STATISTICS\n"
+        f"Group: {group_name}\n"
         f"Name: **{user['full_name']}**\n"
         f"Points: {user['points']} pts\n"
         f"Rank: #{rank} of {len(ranking)} students\n"
