@@ -319,11 +319,23 @@ async def back_to_student_menu(callback: CallbackQuery):
 
 @router.callback_query(F.data == "ranking:refresh")
 async def refresh_ranking(callback: CallbackQuery, user: dict):
-    """Refresh ranking"""
+    """Refresh ranking for student's group only"""
     user_id = str(callback.from_user.id)
-    ranking = db.get_ranking()
+    student = db.get_user(user_id)
+    group_id = student.get('group_id')
     
-    text = "🏆 OVERALL RANKING\n"
+    if not group_id:
+        await callback.answer("❌ You are not assigned to any group!", show_alert=True)
+        return
+    
+    # Get group info
+    group = db.get_group(group_id)
+    group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+    
+    # Get ranking for student's group only
+    ranking = db.get_ranking(group_id=group_id)
+    
+    text = f"🏆 {group_name.upper()} RANKING\n\n"
     
     for i, student in enumerate(ranking[:20], 1):
         emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
@@ -335,7 +347,6 @@ async def refresh_ranking(callback: CallbackQuery, user: dict):
         
         text += f"{emoji} {name} - {student['points']} pts\n"
     
-    text += "\n"
     text += f"\nTotal Students: {len(ranking)}"
     
     await callback.message.edit_text(
