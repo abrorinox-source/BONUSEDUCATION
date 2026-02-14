@@ -2035,34 +2035,7 @@ async def handle_group_edit(callback: CallbackQuery, state: FSMContext):
     await state.set_state(GroupStates.waiting_for_edit_name)
 
 
-@router.message(GroupStates.waiting_for_edit_name)
-async def process_group_edit(message: Message, state: FSMContext):
-    """Process sheet name edit (updates both name and sheet_name)"""
-    new_name = message.text.strip()
-    
-    if len(new_name) < 2 or len(new_name) > 50:
-        await message.answer("❌ Name must be between 2 and 50 characters. Try again:")
-        return
-    
-    data = await state.get_data()
-    group_id = data.get('editing_group_id')
-    
-    # Update both name and sheet_name to the same value
-    success = db.update_group(group_id, {
-        'name': new_name,
-        'sheet_name': new_name
-    })
-    
-    if success:
-        await message.answer(
-            f"✅ Sheet name updated to: {new_name}\n\n"
-            f"⚠️ Make sure the sheet tab '{new_name}' exists in Google Sheets!",
-            reply_markup=keyboards.get_teacher_keyboard()
-        )
-    else:
-        await message.answer("❌ Failed to update name.")
-    
-    await state.clear()
+Tool call argument 'replace' pruned from message history.
 
 
 @router.callback_query(F.data.startswith("group_delete:"))

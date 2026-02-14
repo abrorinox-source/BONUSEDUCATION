@@ -56,6 +56,48 @@ class GoogleSheetsManager:
             print(f"Error getting sheet names: {e}")
             return []
     
+    def rename_sheet_tab(self, old_name: str, new_name: str) -> bool:
+        """Rename a sheet tab in Google Sheets"""
+        try:
+            # Get spreadsheet metadata to find the sheet ID
+            spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            sheets = spreadsheet.get('sheets', [])
+            
+            # Find the sheet ID by name
+            sheet_id = None
+            for sheet in sheets:
+                if sheet['properties']['title'] == old_name:
+                    sheet_id = sheet['properties']['sheetId']
+                    break
+            
+            if sheet_id is None:
+                print(f"❌ Sheet tab '{old_name}' not found")
+                return False
+            
+            # Rename the sheet
+            requests = [{
+                'updateSheetProperties': {
+                    'properties': {
+                        'sheetId': sheet_id,
+                        'title': new_name
+                    },
+                    'fields': 'title'
+                }
+            }]
+            
+            body = {'requests': requests}
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.sheet_id,
+                body=body
+            ).execute()
+            
+            print(f"✅ Renamed sheet tab: '{old_name}' → '{new_name}'")
+            return True
+            
+        except HttpError as e:
+            print(f"❌ Error renaming sheet tab: {e}")
+            return False
+    
     def create_sheet_tab(self, sheet_name: str) -> bool:
         """Create a new sheet tab with header row"""
         try:
