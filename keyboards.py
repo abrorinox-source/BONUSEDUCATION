@@ -7,6 +7,7 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from typing import List, Dict, Any
 import config
+from database import db
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
