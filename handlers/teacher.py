@@ -711,10 +711,13 @@ async def change_bot_status(callback: CallbackQuery):
 
 @router.callback_query(F.data == "sync:all_groups")
 async def sync_all_groups(callback: CallbackQuery):
-    """Sync all groups"""
-    await callback.message.edit_text("⏳ Synchronizing ALL groups...\n🔄 Smart bidirectional sync (timestamp-based)...")
+    """Sync all groups - refreshes group list first"""
+    await callback.message.edit_text("⏳ Refreshing groups and synchronizing...\n🔄 Smart bidirectional sync (timestamp-based)...")
     
-    # Perform smart delta sync (all groups)
+    # First, refresh groups cache to get latest sheets
+    db.get_teacher_groups(force_refresh=True)
+    
+    # Perform smart delta sync (all groups with fresh list)
     stats = await sheets_manager.smart_delta_sync()
     
     result_text = (
@@ -728,7 +731,10 @@ async def sync_all_groups(callback: CallbackQuery):
     )
     
     await callback.message.edit_text(result_text)
-    await callback.answer("✅ All groups synced!")
+    try:
+        await callback.answer("✅ All groups synced!")
+    except:
+        pass  # Ignore timeout errors
 
 
 @router.callback_query(F.data.startswith("sync:single:"))
