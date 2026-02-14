@@ -56,23 +56,38 @@ async def safe_answer_callback(callback: CallbackQuery, text: str = None, show_a
 
 @router.message(F.text.contains("Force Sync"))
 async def force_sync(message: Message):
-    """Force manual sync - bidirectional smart sync with timestamp comparison"""
-    await message.answer("⏳ Synchronizing with Google Sheets...\n🔄 Smart bidirectional sync (timestamp-based)...")
+    """Show group selection for sync"""
+    teacher_id = str(message.from_user.id)
+    groups = db.get_teacher_groups(teacher_id)
     
-    # Perform smart delta sync (bidirectional, timestamp-based)
-    stats = await sheets_manager.smart_delta_sync()
+    if not groups:
+        await message.answer("❌ No groups found. Create a group first in Settings → Manage Groups.")
+        return
     
-    result_text = (
-        f"✅ Sync complete!\n"
-        f"📊 Bidirectional sync (latest wins):\n"
-        f"• Updated: {stats['updated']} students\n"
-        f"• Added: {stats['added']} new students\n"
-        f"• Skipped: {stats.get('skipped', 0)} (no changes)\n"
-        f"• Errors: {stats['errors']}\n\n"
-        f"ℹ️ Latest data wins (timestamp-based)!"
+    # Build keyboard with all groups + "Sync All" option
+    builder = InlineKeyboardBuilder()
+    
+    # Add individual groups
+    for group in groups:
+        student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
+        builder.button(
+            text=f"📁 {group['name']} ({student_count} students)",
+            callback_data=f"sync:single:{group['group_id']}"
+        )
+    
+    # Add "Sync All Groups" option
+    builder.button(
+        text="🔄 Sync All Groups",
+        callback_data="sync:all_groups"
     )
     
-    await message.answer(result_text)
+    builder.adjust(1)
+    
+    await message.answer(
+        "🔄 SELECT GROUP TO SYNC\n\n"
+        "Choose which group to synchronize:",
+        reply_markup=builder.as_markup()
+    )
 
 
 @router.message(F.text.contains("Rating"))
@@ -623,6 +638,64 @@ async def change_bot_status(callback: CallbackQuery):
         reply_markup=keyboards.get_back_keyboard("settings:back")
     )
     await safe_answer_callback(callback, f"✅ Changed to {new_status.upper()} mode")
+
+
+@router.callback_query(F.data == "sync:all_groups")
+async def sync_all_groups(callback: CallbackQuery):
+    """Sync all groups"""
+    await callback.message.edit_text("⏳ Synchronizing ALL groups...\n🔄 Smart bidirectional sync (timestamp-based)...")
+    
+    # Perform smart delta sync (all groups)
+    stats = await sheets_manager.smart_delta_sync()
+    
+    result_text = (
+        f"✅ Sync complete (ALL GROUPS)!\n"
+        f"📊 Bidirectional sync (latest wins):\n"
+        f"• Updated: {stats['updated']} students\n"
+        f"• Added: {stats['added']} new students\n"
+        f"• Skipped: {stats.get('skipped', 0)} (no changes)\n"
+        f"• Errors: {stats['errors']}\n\n"
+        f"ℹ️ Latest data wins (timestamp-based)!"
+    )
+    
+    await callback.message.edit_text(result_text)
+    await callback.answer("✅ All groups synced!")
+
+
+@router.callback_query(F.data.startswith("sync:single:"))
+async def sync_single_group(callback: CallbackQuery):
+    """Sync a specific group"""
+    group_id = callback.data.split(":")[2]
+    
+    # Get group info
+    group = db.get_group(group_id)
+    if not group:
+        await callback.answer("❌ Group not found!", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        f"⏳ Synchronizing: {group['name']}\n"
+        f"📄 Sheet: {group['sheet_name']}\n"
+        f"🔄 Smart bidirectional sync..."
+    )
+    
+    # Perform sync for this group only
+    stats = await sheets_manager._smart_delta_sync_single(group['sheet_name'], group_id)
+    
+    result_text = (
+        f"✅ Sync complete!\n"
+        f"📁 Group: {group['name']}\n"
+        f"📄 Sheet: {group['sheet_name']}\n\n"
+        f"📊 Results:\n"
+        f"• Updated: {stats['updated']} students\n"
+        f"• Added: {stats['added']} new students\n"
+        f"• Skipped: {stats.get('skipped', 0)} (no changes)\n"
+        f"• Errors: {stats['errors']}\n\n"
+        f"ℹ️ Latest data wins (timestamp-based)!"
+    )
+    
+    await callback.message.edit_text(result_text)
+    await callback.answer(f"✅ {group['name']} synced!")
 
 
 @router.callback_query(F.data.startswith("sync:"))
