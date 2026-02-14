@@ -436,19 +436,4 @@ def get_group_detail_keyboard(group_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_group_selection_keyboard(groups: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
-    """Group selection keyboard for students during registration"""
-    builder = InlineKeyboardBuilder()
-    
-    for group in groups:
-        group_id = group.get('group_id', '')
-        name = group.get('name', 'Unknown')
-        
-        builder.button(
-            text=f"📚 {name}",
-            callback_data=f"select_group:{group_id}"
-        )
-    
-    builder.adjust(1)
-    
-    return builder.as_markup()
+# Removed duplicate - using the version at line 341 instead
