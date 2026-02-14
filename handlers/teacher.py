@@ -1872,6 +1872,27 @@ async def handle_groups_actions(callback: CallbackQuery, state: FSMContext):
         await state.set_state(GroupStates.waiting_for_name)
         await safe_answer_callback(callback)
     
+    elif action == "refresh":
+        # Refresh groups by re-scanning Google Sheets
+        teacher_id = str(callback.from_user.id)
+        groups = db.get_teacher_groups(teacher_id)  # This will fetch fresh data from Sheets
+        
+        text = "👥 GROUP MANAGEMENT\n\n"
+        if groups:
+            text += f"✅ Refreshed! You have {len(groups)} group(s):\n"
+            for group in groups:
+                student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
+                text += f"  • {group['name']} ({student_count} students)\n"
+        else:
+            text += "No groups found.\nCreate tabs manually in Google Sheets!"
+        
+        await safe_edit_message(
+            callback,
+            text,
+            reply_markup=keyboards.get_groups_management_keyboard(teacher_id)
+        )
+        await safe_answer_callback(callback, "✅ Groups refreshed!")
+    
     elif action == "switch":
         teacher_id = str(callback.from_user.id)
         groups = db.get_teacher_groups(teacher_id)
