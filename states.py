@@ -55,6 +55,5 @@ class ExportStates(StatesGroup):
 
 class GroupStates(StatesGroup):
     """States for group management"""
-    waiting_for_name = State()
-    waiting_for_sheet_name = State()
+    waiting_for_name = State()  # Now used for sheet name (which is also group name)
     waiting_for_edit_name = State()

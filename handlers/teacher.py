@@ -1894,40 +1894,13 @@ async def handle_groups_actions(callback: CallbackQuery, state: FSMContext):
 
 @router.message(GroupStates.waiting_for_name)
 async def process_group_name(message: Message, state: FSMContext):
-    """Process group name input"""
-    group_name = message.text.strip()
-    
-    if len(group_name) < 2:
-        await message.answer("Group name is too short. Please enter at least 2 characters:")
-        return
-    
-    # Save group name and ask for sheet name
-    await state.update_data(group_name=group_name)
-    
-    # Suggest sheet name based on group name
-    suggested_sheet = group_name.replace(" ", "-")[:30]  # Max 30 chars for sheet name
-    
-    await message.answer(
-        f"✅ Group name: {group_name}\n\n"
-        f"📄 Now enter the Google Sheets tab name:\n"
-        f"(Suggested: {suggested_sheet})\n\n"
-        f"Or just send the suggested name as-is."
-    )
-    await state.set_state(GroupStates.waiting_for_sheet_name)
-
-
-@router.message(GroupStates.waiting_for_sheet_name)
-async def process_sheet_name(message: Message, state: FSMContext):
-    """Process sheet name and create group"""
+    """Process sheet name (which is also the group name)"""
     sheet_name = message.text.strip()
     
-    if len(sheet_name) < 1:
-        await message.answer("Sheet name cannot be empty. Please enter a sheet name:")
+    if len(sheet_name) < 2:
+        await message.answer("Sheet name is too short. Please enter at least 2 characters:")
         return
     
-    # Get saved group name
-    data = await state.get_data()
-    group_name = data.get('group_name')
     teacher_id = str(message.from_user.id)
     
     # Check if sheet name already exists
@@ -1935,13 +1908,13 @@ async def process_sheet_name(message: Message, state: FSMContext):
     if sheet_name in existing_sheets:
         await message.answer(
             f"⚠️ Sheet '{sheet_name}' already exists!\n"
-            f"Please enter a different sheet name:"
+            f"Please enter a different name:"
         )
         return
     
-    # Create the group in Firebase
+    # Create the group (name = sheet_name)
     group_data = {
-        'name': group_name,
+        'name': sheet_name,  # Same as sheet name
         'sheet_name': sheet_name,
         'teacher_id': teacher_id
     }
@@ -1953,11 +1926,11 @@ async def process_sheet_name(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Create the sheet tab in Google Sheets
+    # Create the sheet tab
     success = sheets_manager.create_sheet_tab(sheet_name)
     
     if not success:
-        # Rollback - delete group from Firebase
+        # Rollback
         db.delete_group(group_id)
         await message.answer("❌ Failed to create Google Sheets tab. Please try again.")
         await state.clear()
@@ -1965,13 +1938,15 @@ async def process_sheet_name(message: Message, state: FSMContext):
     
     await message.answer(
         f"✅ GROUP CREATED!\n\n"
-        f"📚 Name: {group_name}\n"
         f"📄 Sheet: {sheet_name}\n\n"
         f"Students can now select this group during registration!",
         reply_markup=keyboards.get_teacher_keyboard()
     )
     
     await state.clear()
+
+
+# Removed - sheet name is now entered directly in waiting_for_name handler
 
 
 @router.callback_query(F.data.startswith("group_view:"))
@@ -2039,34 +2014,8 @@ async def handle_group_students(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("group_edit:"))
-async def handle_group_edit(callback: CallbackQuery):
-    """Show edit options for group"""
-    group_id = callback.data.split(":")[1]
-    group = db.get_group(group_id)
-    
-    if not group:
-        await safe_answer_callback(callback, "Group not found!", show_alert=True)
-        return
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Edit Group Name", callback_data=f"group_edit_name:{group_id}")
-    builder.button(text="📄 Edit Sheet Name", callback_data=f"group_edit_sheet:{group_id}")
-    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data=f"group:view:{group_id}")
-    builder.adjust(1)
-    
-    await safe_edit_message(
-        callback,
-        f"✏️ EDIT GROUP\n\n"
-        f"Group: {group['name']}\n"
-        f"Sheet: {group['sheet_name']}\n\n"
-        f"What do you want to edit?",
-        reply_markup=builder.as_markup()
-    )
-
-
-@router.callback_query(F.data.startswith("group_edit_name:"))
-async def edit_group_name(callback: CallbackQuery, state: FSMContext):
-    """Start editing group name"""
+async def handle_group_edit(callback: CallbackQuery, state: FSMContext):
+    """Start editing sheet name (which is also the group name)"""
     group_id = callback.data.split(":")[1]
     group = db.get_group(group_id)
     
@@ -2076,73 +2025,42 @@ async def edit_group_name(callback: CallbackQuery, state: FSMContext):
     
     await safe_edit_message(
         callback,
-        f"✏️ EDIT GROUP NAME\n\n"
-        f"Current name: {group['name']}\n\n"
-        f"Enter new name:"
+        f"✏️ EDIT SHEET NAME\n\n"
+        f"Current: {group['sheet_name']}\n\n"
+        f"Enter new sheet name:\n"
+        f"(Both group name and Google Sheets tab will be updated)"
     )
     
-    await state.update_data(editing_group_id=group_id, editing_type='name')
-    await state.set_state(GroupStates.waiting_for_edit_name)
-
-
-@router.callback_query(F.data.startswith("group_edit_sheet:"))
-async def edit_sheet_name(callback: CallbackQuery, state: FSMContext):
-    """Start editing sheet name"""
-    group_id = callback.data.split(":")[1]
-    group = db.get_group(group_id)
-    
-    if not group:
-        await safe_answer_callback(callback, "Group not found!", show_alert=True)
-        return
-    
-    await safe_edit_message(
-        callback,
-        f"📄 EDIT SHEET NAME\n\n"
-        f"Group: {group['name']}\n"
-        f"Current sheet: {group['sheet_name']}\n\n"
-        f"⚠️ WARNING: Sheet tab must exist in Google Sheets!\n\n"
-        f"Enter new sheet name:"
-    )
-    
-    await state.update_data(editing_group_id=group_id, editing_type='sheet')
+    await state.update_data(editing_group_id=group_id)
     await state.set_state(GroupStates.waiting_for_edit_name)
 
 
 @router.message(GroupStates.waiting_for_edit_name)
 async def process_group_edit(message: Message, state: FSMContext):
-    """Process group name or sheet name edit"""
-    new_value = message.text.strip()
+    """Process sheet name edit (updates both name and sheet_name)"""
+    new_name = message.text.strip()
     
-    if len(new_value) < 2 or len(new_value) > 50:
+    if len(new_name) < 2 or len(new_name) > 50:
         await message.answer("❌ Name must be between 2 and 50 characters. Try again:")
         return
     
     data = await state.get_data()
     group_id = data.get('editing_group_id')
-    editing_type = data.get('editing_type', 'name')
     
-    # Update based on type
-    if editing_type == 'sheet':
-        # Update sheet name
-        success = db.update_group(group_id, {'sheet_name': new_value})
-        if success:
-            await message.answer(
-                f"✅ Sheet name updated to: {new_value}\n\n"
-                f"⚠️ Make sure the sheet tab '{new_value}' exists in Google Sheets!",
-                reply_markup=keyboards.get_teacher_keyboard()
-            )
-        else:
-            await message.answer("❌ Failed to update sheet name.")
+    # Update both name and sheet_name to the same value
+    success = db.update_group(group_id, {
+        'name': new_name,
+        'sheet_name': new_name
+    })
+    
+    if success:
+        await message.answer(
+            f"✅ Sheet name updated to: {new_name}\n\n"
+            f"⚠️ Make sure the sheet tab '{new_name}' exists in Google Sheets!",
+            reply_markup=keyboards.get_teacher_keyboard()
+        )
     else:
-        # Update group name
-        success = db.update_group(group_id, {'name': new_value})
-        if success:
-            await message.answer(
-                f"✅ Group name updated to: {new_value}",
-                reply_markup=keyboards.get_teacher_keyboard()
-            )
-        else:
-            await message.answer("❌ Failed to update group name.")
+        await message.answer("❌ Failed to update name.")
     
     await state.clear()
 
