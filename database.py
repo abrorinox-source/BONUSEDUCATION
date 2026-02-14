@@ -423,17 +423,16 @@ class FirebaseDB:
             return None
     
     def get_group(self, group_id: str) -> Optional[Dict[str, Any]]:
-        """Get group by ID"""
-        try:
-            doc = self.groups_ref.document(group_id).get()
-            if doc.exists:
-                data = doc.to_dict()
-                data['group_id'] = group_id
-                return data
-            return None
-        except Exception as e:
-            print(f"Error getting group: {e}")
-            return None
+        """Get group by sheet name (group_id is now sheet_name)
+        
+        Since groups are auto-detected from sheets, just return sheet info.
+        """
+        # group_id is now sheet_name - return simple dict
+        return {
+            'group_id': group_id,
+            'name': group_id,
+            'sheet_name': group_id
+        }
     
     def get_all_groups(self, status: str = 'active') -> List[Dict[str, Any]]:
         """Get all groups"""
