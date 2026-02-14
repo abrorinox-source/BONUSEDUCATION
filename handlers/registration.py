@@ -130,17 +130,25 @@ async def process_teacher_code(message: Message, state: FSMContext):
         
         db.create_user(user_id, teacher_data)
         
-        # Create default group for Sheet1 (if doesn't exist)
-        existing_groups = db.get_teacher_groups(user_id)
-        if not existing_groups:
+        # Check if global default group exists (Sheet1)
+        # This should be created only once for ALL teachers
+        all_groups = db.groups_ref.where('sheet_name', '==', 'Sheet1').limit(1).stream()
+        default_exists = False
+        for _ in all_groups:
+            default_exists = True
+            break
+        
+        if not default_exists:
+            # Create global default group (shared by all teachers)
             default_group = {
                 'name': 'Main Group',
                 'sheet_name': 'Sheet1',
-                'teacher_id': user_id,
-                'status': 'active'
+                'teacher_id': 'global',  # Special marker for shared group
+                'status': 'active',
+                'created_at': db.get_timestamp()
             }
             db.create_group(default_group)
-            print(f"✅ Created default group 'Main Group' for teacher {user_id}")
+            print(f"✅ Created global default group 'Main Group' (Sheet1)")
         
         await message.answer(
             "✅ Welcome, Teacher!",
