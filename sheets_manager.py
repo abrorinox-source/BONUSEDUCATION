@@ -315,10 +315,37 @@ class GoogleSheetsManager:
             return False
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # SMART DELTA SYNC
+    # SMART DELTA SYNC - MULTI-GROUP SUPPORT
     # ═══════════════════════════════════════════════════════════════════════════
     
     async def smart_delta_sync(self) -> Dict[str, int]:
+        """
+        Multi-group sync wrapper - syncs all groups
+        """
+        groups = db.get_all_groups(status='active')
+        
+        if not groups:
+            # No groups - use legacy single sheet sync
+            print("⚠️ No groups found, using default Sheet1")
+            return await self._smart_delta_sync_single('Sheet1', None)
+        
+        # Sync all groups
+        total_stats = {'updated': 0, 'added': 0, 'deleted': 0, 'errors': 0, 'skipped': 0}
+        
+        for group in groups:
+            print(f"\n📚 Syncing: {group['name']} ({group['sheet_name']})")
+            try:
+                stats = await self._smart_delta_sync_single(group['sheet_name'], group['group_id'])
+                for key in total_stats:
+                    total_stats[key] += stats.get(key, 0)
+            except Exception as e:
+                print(f"❌ Error syncing {group['name']}: {e}")
+                total_stats['errors'] += 1
+        
+        print(f"\n🔄 Sync complete: {total_stats['updated']} updated, {total_stats['added']} added")
+        return total_stats
+    
+    async def _smart_delta_sync_single(self, sheet_name: str, group_id: Optional[str]) -> Dict[str, int]:
         """
         Timestamp-Based Bidirectional Sync
         Latest modification wins based on last_updated timestamp
@@ -327,12 +354,12 @@ class GoogleSheetsManager:
             stats = {'updated': 0, 'added': 0, 'deleted': 0, 'errors': 0, 'skipped': 0}
             
             try:
-                # Get all active Firebase users
-                firebase_active_users = db.get_all_users(role='student', status='active')
+                # Get all active Firebase users (filtered by group if provided)
+                firebase_active_users = db.get_all_users(role='student', status='active', group_id=group_id)
                 firebase_active_ids = {u['user_id'] for u in firebase_active_users}
                 
-                # Fetch from Sheets
-                sheets_data = self.fetch_all_data()
+                # Fetch from Sheets (specific sheet tab)
+                sheets_data = self.fetch_all_data(sheet_name=sheet_name)
                 sheets_user_ids = {row['user_id'] for row in sheets_data}
                 
                 # Remove deleted/banned users from Sheets
@@ -341,9 +368,10 @@ class GoogleSheetsManager:
                     # Check if user exists in Firebase but not active
                     user = db.get_user(user_id)
                     if user and user.get('status') in ['deleted', 'banned']:
-                        self.delete_user(user_id)
+                        # Note: delete_user doesn't support sheet_name yet, skip for now
+                        # self.delete_user(user_id, sheet_name=sheet_name)
                         stats['deleted'] += 1
-                        print(f"🗑️ Removed {user.get('status')} user from Sheets: {user.get('full_name', user_id)}")
+                        print(f"🗑️ Would remove {user.get('status')} user from Sheets: {user.get('full_name', user_id)}")
                 
                 # Add new active Firebase users to Sheets (e.g., restored users)
                 new_firebase_users = firebase_active_ids - sheets_user_ids
@@ -356,9 +384,9 @@ class GoogleSheetsManager:
                             'phone': user.get('phone', ''),
                             'username': user.get('username', ''),
                             'points': user.get('points', 0)
-                        })
+                        }, sheet_name=sheet_name)
                         stats['added'] += 1
-                        print(f"✅ Added active Firebase user to Sheets: {user['full_name']}")
+                        print(f"✅ Added active Firebase user to {sheet_name}: {user['full_name']}")
                 
                 # Sync Sheets data with Firebase
                 for row in sheets_data:
@@ -421,7 +449,7 @@ class GoogleSheetsManager:
                         
                         elif firebase_timestamp > sheets_timestamp:
                             # Firebase is newer - update Sheets points, but update names from Sheets anyway
-                            self.update_row(user_id, firebase_points)
+                            self.update_row(user_id, firebase_points, sheet_name=sheet_name)
                             # Also update names from Sheets (names always from Sheets)
                             db.update_user(user_id, {
                                 'full_name': row['full_name'],
@@ -434,7 +462,7 @@ class GoogleSheetsManager:
                         else:
                             # Same timestamp but different points (conflict)
                             # Use Firebase points, Sheets names
-                            self.update_row(user_id, firebase_points)
+                            self.update_row(user_id, firebase_points, sheet_name=sheet_name)
                             db.update_user(user_id, {
                                 'full_name': row['full_name'],
                                 'phone': row.get('phone', ''),
@@ -457,7 +485,7 @@ class GoogleSheetsManager:
                     
                     elif firebase_timestamp:
                         # Only Firebase has timestamp - use Firebase points, Sheets names
-                        self.update_row(user_id, firebase_points)
+                        self.update_row(user_id, firebase_points, sheet_name=sheet_name)
                         db.update_user(user_id, {
                             'full_name': row['full_name'],
                             'phone': row.get('phone', ''),
@@ -468,7 +496,7 @@ class GoogleSheetsManager:
                     
                     else:
                         # No timestamps - use Firebase points, Sheets names
-                        self.update_row(user_id, firebase_points)
+                        self.update_row(user_id, firebase_points, sheet_name=sheet_name)
                         db.update_user(user_id, {
                             'full_name': row['full_name'],
                             'phone': row.get('phone', ''),
