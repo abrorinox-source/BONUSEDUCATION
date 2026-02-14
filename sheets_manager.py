@@ -43,15 +43,71 @@ class GoogleSheetsManager:
         self.background_task = None  # Track the background sync task
     
     # ═══════════════════════════════════════════════════════════════════════════
+    # SHEET/TAB MANAGEMENT
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    def get_sheet_names(self) -> List[str]:
+        """Get all sheet names (tabs) from the spreadsheet"""
+        try:
+            spreadsheet = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            sheets = spreadsheet.get('sheets', [])
+            return [sheet['properties']['title'] for sheet in sheets]
+        except HttpError as e:
+            print(f"Error getting sheet names: {e}")
+            return []
+    
+    def create_sheet_tab(self, sheet_name: str) -> bool:
+        """Create a new sheet tab with header row"""
+        try:
+            # Check if sheet already exists
+            existing_sheets = self.get_sheet_names()
+            if sheet_name in existing_sheets:
+                print(f"Sheet '{sheet_name}' already exists")
+                return True
+            
+            # Create new sheet
+            request = {
+                'addSheet': {
+                    'properties': {
+                        'title': sheet_name
+                    }
+                }
+            }
+            
+            body = {'requests': [request]}
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.sheet_id,
+                body=body
+            ).execute()
+            
+            # Add header row
+            header_values = [['User ID', 'Full Name', 'Phone', 'Username', 'Points', 'Last Updated']]
+            header_body = {'values': header_values}
+            
+            self.service.spreadsheets().values().update(
+                spreadsheetId=self.sheet_id,
+                range=f'{sheet_name}!A1:F1',
+                valueInputOption='RAW',
+                body=header_body
+            ).execute()
+            
+            print(f"✅ Created new sheet tab: {sheet_name}")
+            return True
+        
+        except HttpError as e:
+            print(f"Error creating sheet tab: {e}")
+            return False
+    
+    # ═══════════════════════════════════════════════════════════════════════════
     # READ OPERATIONS
     # ═══════════════════════════════════════════════════════════════════════════
     
-    def fetch_all_data(self) -> List[Dict[str, Any]]:
-        """Fetch all data from Google Sheets"""
+    def fetch_all_data(self, sheet_name: str = 'Sheet1') -> List[Dict[str, Any]]:
+        """Fetch all data from Google Sheets (specific sheet/tab)"""
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheet_id,
-                range='Sheet1!A2:F'  # Skip header row
+                range=f'{sheet_name}!A2:F'  # Skip header row
             ).execute()
             
             rows = result.get('values', [])
@@ -100,11 +156,11 @@ class GoogleSheetsManager:
     # WRITE OPERATIONS
     # ═══════════════════════════════════════════════════════════════════════════
     
-    def update_row(self, user_id: str, points: int) -> bool:
+    def update_row(self, user_id: str, points: int, sheet_name: str = 'Sheet1') -> bool:
         """Update specific user's points in Sheets"""
         try:
             # Find the row for this user
-            all_data = self.fetch_all_data()
+            all_data = self.fetch_all_data(sheet_name=sheet_name)
             row_index = None
             
             for idx, user in enumerate(all_data):
@@ -117,7 +173,7 @@ class GoogleSheetsManager:
                 return False
             
             # Update the points column (E) and last_updated (F)
-            range_name = f'Sheet1!E{row_index}:F{row_index}'
+            range_name = f'{sheet_name}!E{row_index}:F{row_index}'
             values = [[points, datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')]]
             
             body = {'values': values}
@@ -135,13 +191,13 @@ class GoogleSheetsManager:
             print(f"Error updating Sheets: {e}")
             return False
     
-    def add_user(self, user_data: Dict[str, Any]) -> bool:
+    def add_user(self, user_data: Dict[str, Any], sheet_name: str = 'Sheet1') -> bool:
         """Add new user to Google Sheets - finds first empty row after header"""
         try:
             # Get all data including empty rows
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheet_id,
-                range='Sheet1!A2:A'  # Get all user_id column starting from row 2
+                range=f'{sheet_name}!A2:A'  # Get all user_id column starting from row 2
             ).execute()
             
             rows = result.get('values', [])
@@ -168,7 +224,7 @@ class GoogleSheetsManager:
             body = {'values': values}
             
             # Insert at specific row
-            range_name = f'Sheet1!A{target_row}:F{target_row}'
+            range_name = f'{sheet_name}!A{target_row}:F{target_row}'
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheet_id,
                 range=range_name,
@@ -176,7 +232,7 @@ class GoogleSheetsManager:
                 body=body
             ).execute()
             
-            print(f"✅ Added user to row {target_row}: {user_data.get('full_name', 'Unknown')}")
+            print(f"✅ Added user to {sheet_name} row {target_row}: {user_data.get('full_name', 'Unknown')}")
             return True
         
         except HttpError as e:

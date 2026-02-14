@@ -75,7 +75,8 @@ GOOGLE_SCOPES = [
 COLLECTIONS = {
     'USERS': 'users',
     'SETTINGS': 'settings',
-    'TRANSACTION_LOGS': 'transaction_logs'
+    'TRANSACTION_LOGS': 'transaction_logs',
+    'GROUPS': 'groups'
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

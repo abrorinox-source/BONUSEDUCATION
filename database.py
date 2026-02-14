@@ -36,6 +36,7 @@ class FirebaseDB:
         self.users_ref = self.db.collection(config.COLLECTIONS['USERS'])
         self.settings_ref = self.db.collection(config.COLLECTIONS['SETTINGS'])
         self.logs_ref = self.db.collection(config.COLLECTIONS['TRANSACTION_LOGS'])
+        self.groups_ref = self.db.collection(config.COLLECTIONS['GROUPS'])
     
     # ═══════════════════════════════════════════════════════════════════════════
     # USER OPERATIONS
@@ -86,7 +87,7 @@ class FirebaseDB:
             print(f"Error deleting user: {e}")
             return False
     
-    def get_all_users(self, role: Optional[str] = None, status: Optional[str] = None) -> List[Dict[str, Any]]:
+    def get_all_users(self, role: Optional[str] = None, status: Optional[str] = None, group_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get all users with optional filters"""
         query = self.users_ref
         
@@ -94,6 +95,8 @@ class FirebaseDB:
             query = query.where('role', '==', role)
         if status:
             query = query.where('status', '==', status)
+        if group_id:
+            query = query.where('group_id', '==', group_id)
         
         users = []
         for doc in query.stream():
@@ -103,9 +106,9 @@ class FirebaseDB:
         
         return users
     
-    def get_ranking(self) -> List[Dict[str, Any]]:
-        """Get all active students sorted by points"""
-        users = self.get_all_users(role='student', status='active')
+    def get_ranking(self, group_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all active students sorted by points (optionally filtered by group)"""
+        users = self.get_all_users(role='student', status='active', group_id=group_id)
         return sorted(users, key=lambda x: x.get('points', 0), reverse=True)
     
     def get_pending_approvals(self) -> List[Dict[str, Any]]:
@@ -403,6 +406,83 @@ class FirebaseDB:
                            reverse=True)
         
         return list(sorted_logs)[:limit]
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # GROUP OPERATIONS
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    def create_group(self, group_data: Dict[str, Any]) -> str:
+        """Create a new group and return its ID"""
+        try:
+            group_data['created_at'] = SERVER_TIMESTAMP
+            group_data['status'] = 'active'
+            doc_ref = self.groups_ref.add(group_data)
+            return doc_ref[1].id
+        except Exception as e:
+            print(f"Error creating group: {e}")
+            return None
+    
+    def get_group(self, group_id: str) -> Optional[Dict[str, Any]]:
+        """Get group by ID"""
+        try:
+            doc = self.groups_ref.document(group_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                data['group_id'] = group_id
+                return data
+            return None
+        except Exception as e:
+            print(f"Error getting group: {e}")
+            return None
+    
+    def get_all_groups(self, status: str = 'active') -> List[Dict[str, Any]]:
+        """Get all groups"""
+        try:
+            query = self.groups_ref.where('status', '==', status)
+            groups = []
+            for doc in query.stream():
+                group_data = doc.to_dict()
+                group_data['group_id'] = doc.id
+                groups.append(group_data)
+            return groups
+        except Exception as e:
+            print(f"Error getting groups: {e}")
+            return []
+    
+    def update_group(self, group_id: str, updates: Dict[str, Any]) -> bool:
+        """Update group data"""
+        try:
+            self.groups_ref.document(group_id).update(updates)
+            return True
+        except Exception as e:
+            print(f"Error updating group: {e}")
+            return False
+    
+    def delete_group(self, group_id: str) -> bool:
+        """Soft delete group"""
+        try:
+            self.groups_ref.document(group_id).update({
+                'status': 'deleted',
+                'deleted_at': SERVER_TIMESTAMP
+            })
+            return True
+        except Exception as e:
+            print(f"Error deleting group: {e}")
+            return False
+    
+    def get_teacher_groups(self, teacher_id: str) -> List[Dict[str, Any]]:
+        """Get all groups owned by a teacher"""
+        try:
+            query = self.groups_ref.where('teacher_id', '==', teacher_id).where('status', '==', 'active')
+            groups = []
+            for doc in query.stream():
+                group_data = doc.to_dict()
+                group_data['group_id'] = doc.id
+                groups.append(group_data)
+            return groups
+        except Exception as e:
+            print(f"Error getting teacher groups: {e}")
+            return []
 
 
 # Global database instance

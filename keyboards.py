@@ -103,6 +103,7 @@ def get_settings_keyboard() -> InlineKeyboardMarkup:
     """Settings menu keyboard"""
     builder = InlineKeyboardBuilder()
     
+    builder.button(text="👥 Manage Groups", callback_data="settings:groups")
     builder.button(text="💰 Transfer Commission", callback_data="settings:commission")
     builder.button(text="🔓 Bot Status", callback_data="settings:bot_status")
     builder.button(text="🔄 Sync Control", callback_data="settings:sync_control")
@@ -112,7 +113,7 @@ def get_settings_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📢 Global Broadcast", callback_data="settings:broadcast")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(2, 2, 2, 1, 1)
+    builder.adjust(2, 2, 2, 2, 1)
     
     return builder.as_markup()
 
@@ -345,5 +346,86 @@ def get_edit_rules_keyboard() -> InlineKeyboardMarkup:
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
     builder.adjust(1, 1)
+    
+    return builder.as_markup()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GROUP MANAGEMENT KEYBOARDS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def get_groups_management_keyboard(teacher_id: str) -> InlineKeyboardMarkup:
+    """Groups management main menu"""
+    from database import db
+    
+    builder = InlineKeyboardBuilder()
+    
+    groups = db.get_teacher_groups(teacher_id)
+    
+    if groups:
+        builder.button(text="📋 View All Groups", callback_data="groups:list")
+    
+    builder.button(text="➕ Create New Group", callback_data="groups:create")
+    builder.button(text="🔄 Switch Active Group", callback_data="groups:switch")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
+    
+    if groups:
+        builder.adjust(1, 1, 1, 1)
+    else:
+        builder.adjust(1, 1, 1)
+    
+    return builder.as_markup()
+
+
+def get_groups_list_keyboard(groups: List[Dict[str, Any]], action: str = "view") -> InlineKeyboardMarkup:
+    """List of groups keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    for group in groups:
+        group_id = group.get('group_id', '')
+        name = group.get('name', 'Unknown')
+        sheet_name = group.get('sheet_name', '')
+        
+        builder.button(
+            text=f"📚 {name} ({sheet_name})",
+            callback_data=f"group_{action}:{group_id}"
+        )
+    
+    builder.button(text="➕ Create New Group", callback_data="groups:create")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:groups")
+    
+    builder.adjust(1)
+    
+    return builder.as_markup()
+
+
+def get_group_detail_keyboard(group_id: str) -> InlineKeyboardMarkup:
+    """Group detail actions keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text="✏️ Edit Name", callback_data=f"group_edit:{group_id}")
+    builder.button(text="👥 View Students", callback_data=f"group_students:{group_id}")
+    builder.button(text="🗑️ Delete Group", callback_data=f"group_delete:{group_id}")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="groups:list")
+    
+    builder.adjust(2, 1, 1)
+    
+    return builder.as_markup()
+
+
+def get_group_selection_keyboard(groups: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+    """Group selection keyboard for students during registration"""
+    builder = InlineKeyboardBuilder()
+    
+    for group in groups:
+        group_id = group.get('group_id', '')
+        name = group.get('name', 'Unknown')
+        
+        builder.button(
+            text=f"📚 {name}",
+            callback_data=f"select_group:{group_id}"
+        )
+    
+    builder.adjust(1)
     
     return builder.as_markup()
