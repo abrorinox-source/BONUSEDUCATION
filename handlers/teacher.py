@@ -2039,7 +2039,33 @@ async def handle_group_students(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("group_edit:"))
-async def handle_group_edit(callback: CallbackQuery, state: FSMContext):
+async def handle_group_edit(callback: CallbackQuery):
+    """Show edit options for group"""
+    group_id = callback.data.split(":")[1]
+    group = db.get_group(group_id)
+    
+    if not group:
+        await safe_answer_callback(callback, "Group not found!", show_alert=True)
+        return
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Edit Group Name", callback_data=f"group_edit_name:{group_id}")
+    builder.button(text="📄 Edit Sheet Name", callback_data=f"group_edit_sheet:{group_id}")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data=f"group:view:{group_id}")
+    builder.adjust(1)
+    
+    await safe_edit_message(
+        callback,
+        f"✏️ EDIT GROUP\n\n"
+        f"Group: {group['name']}\n"
+        f"Sheet: {group['sheet_name']}\n\n"
+        f"What do you want to edit?",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("group_edit_name:"))
+async def edit_group_name(callback: CallbackQuery, state: FSMContext):
     """Start editing group name"""
     group_id = callback.data.split(":")[1]
     group = db.get_group(group_id)
@@ -2055,7 +2081,30 @@ async def handle_group_edit(callback: CallbackQuery, state: FSMContext):
         f"Enter new name:"
     )
     
-    await state.update_data(editing_group_id=group_id)
+    await state.update_data(editing_group_id=group_id, editing_type='name')
+    await state.set_state(GroupStates.waiting_for_edit_name)
+
+
+@router.callback_query(F.data.startswith("group_edit_sheet:"))
+async def edit_sheet_name(callback: CallbackQuery, state: FSMContext):
+    """Start editing sheet name"""
+    group_id = callback.data.split(":")[1]
+    group = db.get_group(group_id)
+    
+    if not group:
+        await safe_answer_callback(callback, "Group not found!", show_alert=True)
+        return
+    
+    await safe_edit_message(
+        callback,
+        f"📄 EDIT SHEET NAME\n\n"
+        f"Group: {group['name']}\n"
+        f"Current sheet: {group['sheet_name']}\n\n"
+        f"⚠️ WARNING: Sheet tab must exist in Google Sheets!\n\n"
+        f"Enter new sheet name:"
+    )
+    
+    await state.update_data(editing_group_id=group_id, editing_type='sheet')
     await state.set_state(GroupStates.waiting_for_edit_name)
 
 
