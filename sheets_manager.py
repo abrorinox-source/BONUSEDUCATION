@@ -399,17 +399,18 @@ class GoogleSheetsManager:
                     user = db.get_user(user_id)
                     
                     if not user:
-                        # New user in Sheets - add to Firebase
+                        # New user in Sheets - add to Firebase with group_id
                         db.create_user(user_id, {
                             'full_name': user_name,
                             'phone': row.get('phone', ''),
                             'username': row.get('username', ''),
                             'points': sheets_points,
                             'status': 'active',
-                            'role': 'student'
+                            'role': 'student',
+                            'group_id': group_id  # Assign to current group being synced
                         })
                         stats['added'] += 1
-                        print(f"✅ Added new user from Sheets: {user_name}")
+                        print(f"✅ Added new user from Sheets to group {group_id}: {user_name}")
                         continue
                     
                     # User exists - compare timestamps
