@@ -2110,25 +2110,39 @@ async def edit_sheet_name(callback: CallbackQuery, state: FSMContext):
 
 @router.message(GroupStates.waiting_for_edit_name)
 async def process_group_edit(message: Message, state: FSMContext):
-    """Process group name edit"""
-    new_name = message.text.strip()
+    """Process group name or sheet name edit"""
+    new_value = message.text.strip()
     
-    if len(new_name) < 2:
-        await message.answer("Group name is too short. Please enter at least 2 characters:")
+    if len(new_value) < 2 or len(new_value) > 50:
+        await message.answer("❌ Name must be between 2 and 50 characters. Try again:")
         return
     
     data = await state.get_data()
     group_id = data.get('editing_group_id')
+    editing_type = data.get('editing_type', 'name')
     
-    success = db.update_group(group_id, {'name': new_name})
-    
-    if success:
-        await message.answer(
-            f"✅ Group name updated to: {new_name}",
-            reply_markup=keyboards.get_teacher_keyboard()
-        )
+    # Update based on type
+    if editing_type == 'sheet':
+        # Update sheet name
+        success = db.update_group(group_id, {'sheet_name': new_value})
+        if success:
+            await message.answer(
+                f"✅ Sheet name updated to: {new_value}\n\n"
+                f"⚠️ Make sure the sheet tab '{new_value}' exists in Google Sheets!",
+                reply_markup=keyboards.get_teacher_keyboard()
+            )
+        else:
+            await message.answer("❌ Failed to update sheet name.")
     else:
-        await message.answer("❌ Failed to update group name.")
+        # Update group name
+        success = db.update_group(group_id, {'name': new_value})
+        if success:
+            await message.answer(
+                f"✅ Group name updated to: {new_value}",
+                reply_markup=keyboards.get_teacher_keyboard()
+            )
+        else:
+            await message.answer("❌ Failed to update group name.")
     
     await state.clear()
 
