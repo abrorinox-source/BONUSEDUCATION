@@ -470,7 +470,7 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
-    def get_teacher_groups(self, teacher_id: str = None) -> List[Dict[str, Any]]:
+    def get_teacher_groups_old(self, teacher_id: str = None) -> List[Dict[str, Any]]:
         """Get ALL active groups (shared environment - all teachers see all groups)
         
         teacher_id parameter kept for API compatibility but not used.

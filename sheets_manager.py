@@ -56,6 +56,36 @@ class GoogleSheetsManager:
             print(f"Error getting sheet names: {e}")
             return []
     
+    def get_groups_from_sheets(self) -> List[Dict[str, Any]]:
+        """Get all groups from Google Sheets tabs (auto-detect)
+        
+        This replaces Firebase groups - groups are now defined by sheet tabs only.
+        Each sheet tab = one group.
+        """
+        try:
+            sheet_names = self.get_sheet_names()
+            groups = []
+            
+            for sheet_name in sheet_names:
+                # Get student count for this sheet
+                try:
+                    data = self.fetch_all_data(sheet_name=sheet_name)
+                    student_count = len(data)
+                except:
+                    student_count = 0
+                
+                groups.append({
+                    'group_id': sheet_name,  # Sheet name is now the group ID
+                    'name': sheet_name,      # Sheet name is the group name
+                    'sheet_name': sheet_name,
+                    'student_count': student_count
+                })
+            
+            return groups
+        except Exception as e:
+            print(f"Error getting groups from sheets: {e}")
+            return []
+    
     def rename_sheet_tab(self, old_name: str, new_name: str) -> bool:
         """Rename a sheet tab in Google Sheets"""
         try:
