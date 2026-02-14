@@ -470,25 +470,14 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
-    def get_teacher_groups_old(self, teacher_id: str = None) -> List[Dict[str, Any]]:
-        """Get ALL active groups (shared environment - all teachers see all groups)
+    def get_teacher_groups(self, teacher_id: str = None) -> List[Dict[str, Any]]:
+        """Get all groups from Google Sheets tabs (auto-detect)
         
-        teacher_id parameter kept for API compatibility but not used.
-        All teachers work in same environment and see all groups.
+        Now reads directly from Google Sheets tabs instead of Firebase.
+        teacher_id kept for compatibility but not used - all teachers see all sheets.
         """
-        try:
-            # Get ALL active groups (no teacher filter - shared environment)
-            query = self.groups_ref.where('status', '==', 'active')
-            groups = []
-            for doc in query.stream():
-                group_data = doc.to_dict()
-                group_data['group_id'] = doc.id
-                groups.append(group_data)
-            
-            return groups
-        except Exception as e:
-            print(f"Error getting groups: {e}")
-            return []
+        from sheets_manager import sheets_manager
+        return sheets_manager.get_groups_from_sheets()
 
 
 # Global database instance
