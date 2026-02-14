@@ -498,6 +498,25 @@ class FirebaseDB:
         from sheets_manager import sheets_manager
         groups = sheets_manager.get_groups_from_sheets()
         
+        # Get old cache for comparison (to detect renames)
+        old_groups = []
+        try:
+            cache_doc = self.settings_ref.document('groups_cache').get()
+            if cache_doc.exists:
+                old_groups = cache_doc.to_dict().get('groups', [])
+        except:
+            pass
+        
+        # Check for renamed sheets and update students
+        if old_groups:
+            old_names = {g['group_id'] for g in old_groups}
+            new_names = {g['group_id'] for g in groups}
+            
+            # Simple check: if count same but names different, might be renamed
+            # Update students to match new sheet names
+            print("🔍 Checking for renamed sheets...")
+            self.update_students_group_names(old_groups, groups)
+        
         # Save to settings as cache
         try:
             from google.cloud.firestore import SERVER_TIMESTAMP
