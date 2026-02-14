@@ -148,35 +148,77 @@ async def process_contact(message: Message, state: FSMContext):
         await message.answer("❌ Please share your contact using the button below:")
         return
     
+    # Save contact to FSM
+    await state.update_data(phone=message.contact.phone_number)
+    
+    # Check if there are any groups
+    groups = db.get_all_groups(status='active')
+    
+    if groups:
+        # Show group selection
+        await message.answer(
+            "📚 SELECT YOUR CLASS/GROUP\n\n"
+            "Please select which group you belong to:",
+            reply_markup=keyboards.get_group_selection_keyboard(groups)
+        )
+        await state.set_state(states.RegistrationStates.waiting_for_group)
+    else:
+        # No groups - complete registration without group
+        await complete_registration(message, state, group_id=None)
+
+
+@router.callback_query(F.data.startswith("select_group:"))
+async def process_group_selection(callback: CallbackQuery, state: FSMContext):
+    """Process group selection"""
+    group_id = callback.data.split(":")[1]
+    
+    # Verify group exists
+    group = db.get_group(group_id)
+    if not group:
+        await callback.answer("❌ Group not found!", show_alert=True)
+        return
+    
+    # Complete registration with selected group
+    await complete_registration(callback.message, state, group_id=group_id, group_name=group['name'])
+    await callback.answer(f"✅ Selected: {group['name']}")
+
+
+async def complete_registration(message: Message, state: FSMContext, group_id: str = None, group_name: str = None):
+    """Complete student registration"""
     data = await state.get_data()
     user_id = str(message.from_user.id)
     
     # Create student record
     student_data = {
         'full_name': data['full_name'],
-        'phone': message.contact.phone_number,
+        'phone': data['phone'],
         'username': message.from_user.username or '',
         'role': 'student',
         'status': 'pending',
         'points': 0
     }
     
+    # Add group_id if provided
+    if group_id:
+        student_data['group_id'] = group_id
+    
     db.create_user(user_id, student_data)
     
     # Notify student
+    group_text = f"\nGroup: {group_name}" if group_name else ""
     await message.answer(
-        "✅ Registration submitted!\n"
+        f"✅ Registration submitted!{group_text}\n"
         "Wait for teacher approval.",
         reply_markup=keyboards.get_student_keyboard()
     )
     
     # Notify teacher
-    await notify_teacher_new_registration(message.bot, user_id, student_data)
+    await notify_teacher_new_registration(message.bot, user_id, student_data, group_name)
     
     await state.clear()
 
 
-async def notify_teacher_new_registration(bot, user_id: str, student_data: dict):
+async def notify_teacher_new_registration(bot, user_id: str, student_data: dict, group_name: str = None):
     """Send approval request to teacher"""
     # Get all teachers
     teachers = db.get_all_users(role='teacher', status='active')
@@ -185,11 +227,14 @@ async def notify_teacher_new_registration(bot, user_id: str, student_data: dict)
         print("⚠️ No active teachers found!")
         return
     
+    group_text = f"Group: {group_name}\n" if group_name else ""
+    
     message_text = (
         f"📝 NEW REGISTRATION REQUEST\n"
         f"Name: {student_data['full_name']}\n"
         f"Phone: {student_data['phone']}\n"
         f"Username: @{student_data['username']}\n"
+        f"{group_text}"
         f"User ID: {user_id}\n\n"
         f"Approve or reject this registration?"
     )

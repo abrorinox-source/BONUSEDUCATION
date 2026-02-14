@@ -10,6 +10,7 @@ class RegistrationStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_teacher_code = State()
     waiting_for_contact = State()
+    waiting_for_group = State()
 
 
 class AddPointsStates(StatesGroup):
@@ -50,3 +51,10 @@ class BroadcastStates(StatesGroup):
 class ExportStates(StatesGroup):
     """States for data export"""
     processing = State()
+
+
+class GroupStates(StatesGroup):
+    """States for group management"""
+    waiting_for_name = State()
+    waiting_for_sheet_name = State()
+    waiting_for_edit_name = State()

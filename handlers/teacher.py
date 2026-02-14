@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramBadRequest
 from database import db
 from sheets_manager import sheets_manager
 import keyboards
-from states import AddPointsStates, SubtractPointsStates, BroadcastStates, EditRulesStates
+from states import AddPointsStates, SubtractPointsStates, BroadcastStates, EditRulesStates, GroupStates
 import config
 from datetime import datetime
 
@@ -462,7 +462,25 @@ async def handle_settings(callback: CallbackQuery):
         await safe_answer_callback(callback)
         return
     
-    if action == "commission":
+    if action == "groups":
+        teacher_id = str(callback.from_user.id)
+        groups = db.get_teacher_groups(teacher_id)
+        
+        text = "👥 GROUP MANAGEMENT\n\n"
+        if groups:
+            text += f"You have {len(groups)} group(s):\n"
+            for group in groups:
+                text += f"  • {group['name']} ({group['sheet_name']})\n"
+        else:
+            text += "You don't have any groups yet.\nCreate your first group to get started!"
+        
+        await safe_edit_message(
+            callback,
+            text,
+            reply_markup=keyboards.get_groups_management_keyboard(teacher_id)
+        )
+    
+    elif action == "commission":
         settings = db.get_settings()
         commission_rate = settings.get('commission_rate', config.DEFAULT_COMMISSION_RATE)
         
@@ -1629,4 +1647,310 @@ async def handle_export(callback: CallbackQuery):
             f"✅ PDF export complete!",
             reply_markup=keyboards.get_back_keyboard("settings:export")
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GROUP MANAGEMENT HANDLERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("groups:"))
+async def handle_groups_actions(callback: CallbackQuery, state: FSMContext):
+    """Handle group management actions"""
+    action = callback.data.split(":")[1]
+    
+    if action == "list":
+        teacher_id = str(callback.from_user.id)
+        groups = db.get_teacher_groups(teacher_id)
+        
+        if not groups:
+            await safe_edit_message(
+                callback,
+                "You don't have any groups yet.\nCreate your first group!",
+                reply_markup=keyboards.get_back_keyboard("settings:groups")
+            )
+            return
+        
+        text = "📋 YOUR GROUPS\n\n"
+        for idx, group in enumerate(groups, 1):
+            text += f"{idx}. {group['name']}\n"
+            text += f"   📄 Sheet: {group['sheet_name']}\n"
+            
+            # Count students in this group
+            students = db.get_all_users(role='student', status='active', group_id=group['group_id'])
+            text += f"   👥 Students: {len(students)}\n\n"
+        
+        await safe_edit_message(
+            callback,
+            text,
+            reply_markup=keyboards.get_groups_list_keyboard(groups, action="view")
+        )
+    
+    elif action == "create":
+        await safe_edit_message(
+            callback,
+            "📝 CREATE NEW GROUP\n\n"
+            "Enter the group name (e.g., 'Class 10-A', 'Group B'):"
+        )
+        await state.set_state(GroupStates.waiting_for_name)
+        await safe_answer_callback(callback)
+    
+    elif action == "switch":
+        teacher_id = str(callback.from_user.id)
+        groups = db.get_teacher_groups(teacher_id)
+        
+        if not groups:
+            await safe_edit_message(
+                callback,
+                "You don't have any groups to switch to.\nCreate a group first!",
+                reply_markup=keyboards.get_back_keyboard("settings:groups")
+            )
+            return
+        
+        await safe_edit_message(
+            callback,
+            "🔄 SWITCH ACTIVE GROUP\n\n"
+            "Select the group you want to work with:",
+            reply_markup=keyboards.get_groups_list_keyboard(groups, action="switch")
+        )
+
+
+@router.message(GroupStates.waiting_for_name)
+async def process_group_name(message: Message, state: FSMContext):
+    """Process group name input"""
+    group_name = message.text.strip()
+    
+    if len(group_name) < 2:
+        await message.answer("Group name is too short. Please enter at least 2 characters:")
+        return
+    
+    # Save group name and ask for sheet name
+    await state.update_data(group_name=group_name)
+    
+    # Suggest sheet name based on group name
+    suggested_sheet = group_name.replace(" ", "-")[:30]  # Max 30 chars for sheet name
+    
+    await message.answer(
+        f"✅ Group name: {group_name}\n\n"
+        f"📄 Now enter the Google Sheets tab name:\n"
+        f"(Suggested: {suggested_sheet})\n\n"
+        f"Or just send the suggested name as-is."
+    )
+    await state.set_state(GroupStates.waiting_for_sheet_name)
+
+
+@router.message(GroupStates.waiting_for_sheet_name)
+async def process_sheet_name(message: Message, state: FSMContext):
+    """Process sheet name and create group"""
+    sheet_name = message.text.strip()
+    
+    if len(sheet_name) < 1:
+        await message.answer("Sheet name cannot be empty. Please enter a sheet name:")
+        return
+    
+    # Get saved group name
+    data = await state.get_data()
+    group_name = data.get('group_name')
+    teacher_id = str(message.from_user.id)
+    
+    # Check if sheet name already exists
+    existing_sheets = sheets_manager.get_sheet_names()
+    if sheet_name in existing_sheets:
+        await message.answer(
+            f"⚠️ Sheet '{sheet_name}' already exists!\n"
+            f"Please enter a different sheet name:"
+        )
+        return
+    
+    # Create the group in Firebase
+    group_data = {
+        'name': group_name,
+        'sheet_name': sheet_name,
+        'teacher_id': teacher_id
+    }
+    
+    group_id = db.create_group(group_data)
+    
+    if not group_id:
+        await message.answer("❌ Failed to create group. Please try again.")
+        await state.clear()
+        return
+    
+    # Create the sheet tab in Google Sheets
+    success = sheets_manager.create_sheet_tab(sheet_name)
+    
+    if not success:
+        # Rollback - delete group from Firebase
+        db.delete_group(group_id)
+        await message.answer("❌ Failed to create Google Sheets tab. Please try again.")
+        await state.clear()
+        return
+    
+    await message.answer(
+        f"✅ GROUP CREATED!\n\n"
+        f"📚 Name: {group_name}\n"
+        f"📄 Sheet: {sheet_name}\n\n"
+        f"Students can now select this group during registration!",
+        reply_markup=keyboards.get_teacher_keyboard()
+    )
+    
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("group_view:"))
+async def handle_group_view(callback: CallbackQuery):
+    """View group details"""
+    group_id = callback.data.split(":")[1]
+    group = db.get_group(group_id)
+    
+    if not group:
+        await safe_answer_callback(callback, "Group not found!", show_alert=True)
+        return
+    
+    # Count students
+    students = db.get_all_users(role='student', status='active', group_id=group_id)
+    
+    text = f"📚 GROUP DETAILS\n\n"
+    text += f"Name: {group['name']}\n"
+    text += f"Sheet: {group['sheet_name']}\n"
+    text += f"Students: {len(students)}\n"
+    text += f"Status: {group.get('status', 'active')}\n"
+    
+    await safe_edit_message(
+        callback,
+        text,
+        reply_markup=keyboards.get_group_detail_keyboard(group_id)
+    )
+
+
+@router.callback_query(F.data.startswith("group_students:"))
+async def handle_group_students(callback: CallbackQuery):
+    """View students in a group"""
+    group_id = callback.data.split(":")[1]
+    group = db.get_group(group_id)
+    
+    if not group:
+        await safe_answer_callback(callback, "Group not found!", show_alert=True)
+        return
+    
+    students = db.get_all_users(role='student', status='active', group_id=group_id)
+    
+    if not students:
+        await safe_edit_message(
+            callback,
+            f"📚 {group['name']}\n\n"
+            f"No students in this group yet.",
+            reply_markup=keyboards.get_back_keyboard(f"group_view:{group_id}")
+        )
+        return
+    
+    # Sort by points
+    students.sort(key=lambda x: x.get('points', 0), reverse=True)
+    
+    text = f"👥 STUDENTS IN {group['name']}\n\n"
+    for idx, student in enumerate(students[:20], 1):  # Show top 20
+        text += f"{idx}. {student['full_name']} - {student.get('points', 0)} pts\n"
+    
+    if len(students) > 20:
+        text += f"\n... and {len(students) - 20} more"
+    
+    await safe_edit_message(
+        callback,
+        text,
+        reply_markup=keyboards.get_back_keyboard(f"group_view:{group_id}")
+    )
+
+
+@router.callback_query(F.data.startswith("group_edit:"))
+async def handle_group_edit(callback: CallbackQuery, state: FSMContext):
+    """Start editing group name"""
+    group_id = callback.data.split(":")[1]
+    group = db.get_group(group_id)
+    
+    if not group:
+        await safe_answer_callback(callback, "Group not found!", show_alert=True)
+        return
+    
+    await safe_edit_message(
+        callback,
+        f"✏️ EDIT GROUP NAME\n\n"
+        f"Current name: {group['name']}\n\n"
+        f"Enter new name:"
+    )
+    
+    await state.update_data(editing_group_id=group_id)
+    await state.set_state(GroupStates.waiting_for_edit_name)
+
+
+@router.message(GroupStates.waiting_for_edit_name)
+async def process_group_edit(message: Message, state: FSMContext):
+    """Process group name edit"""
+    new_name = message.text.strip()
+    
+    if len(new_name) < 2:
+        await message.answer("Group name is too short. Please enter at least 2 characters:")
+        return
+    
+    data = await state.get_data()
+    group_id = data.get('editing_group_id')
+    
+    success = db.update_group(group_id, {'name': new_name})
+    
+    if success:
+        await message.answer(
+            f"✅ Group name updated to: {new_name}",
+            reply_markup=keyboards.get_teacher_keyboard()
+        )
+    else:
+        await message.answer("❌ Failed to update group name.")
+    
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("group_delete:"))
+async def handle_group_delete(callback: CallbackQuery):
+    """Delete group (with confirmation)"""
+    group_id = callback.data.split(":")[1]
+    group = db.get_group(group_id)
+    
+    if not group:
+        await safe_answer_callback(callback, "Group not found!", show_alert=True)
+        return
+    
+    # Check if group has students
+    students = db.get_all_users(role='student', status='active', group_id=group_id)
+    
+    if students:
+        await safe_edit_message(
+            callback,
+            f"⚠️ WARNING\n\n"
+            f"Group '{group['name']}' has {len(students)} student(s).\n"
+            f"Deleting this group will remove the group assignment from all students.\n\n"
+            f"Are you sure?",
+            reply_markup=keyboards.get_confirmation_keyboard("delete_group_confirm", group_id)
+        )
+    else:
+        await safe_edit_message(
+            callback,
+            f"⚠️ DELETE GROUP\n\n"
+            f"Are you sure you want to delete '{group['name']}'?",
+            reply_markup=keyboards.get_confirmation_keyboard("delete_group_confirm", group_id)
+        )
+
+
+@router.callback_query(F.data.startswith("confirm:delete_group_confirm:"))
+async def handle_group_delete_confirm(callback: CallbackQuery):
+    """Confirm group deletion"""
+    group_id = callback.data.split(":")[2]
+    
+    # Delete the group
+    success = db.delete_group(group_id)
+    
+    if success:
+        await safe_edit_message(
+            callback,
+            "✅ Group deleted successfully!",
+            reply_markup=keyboards.get_back_keyboard("settings:groups")
+        )
+    else:
+        await safe_answer_callback(callback, "❌ Failed to delete group", show_alert=True)
     
