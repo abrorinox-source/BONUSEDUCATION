@@ -130,6 +130,18 @@ async def process_teacher_code(message: Message, state: FSMContext):
         
         db.create_user(user_id, teacher_data)
         
+        # Create default group for Sheet1 (if doesn't exist)
+        existing_groups = db.get_teacher_groups(user_id)
+        if not existing_groups:
+            default_group = {
+                'name': 'Main Group',
+                'sheet_name': 'Sheet1',
+                'teacher_id': user_id,
+                'status': 'active'
+            }
+            db.create_group(default_group)
+            print(f"✅ Created default group 'Main Group' for teacher {user_id}")
+        
         await message.answer(
             "✅ Welcome, Teacher!",
             reply_markup=keyboards.get_teacher_keyboard()
