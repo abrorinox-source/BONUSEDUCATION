@@ -471,14 +471,24 @@ class FirebaseDB:
             return False
     
     def get_teacher_groups(self, teacher_id: str) -> List[Dict[str, Any]]:
-        """Get all groups owned by a teacher"""
+        """Get all groups for a teacher (includes global default group + teacher's own groups)"""
         try:
-            query = self.groups_ref.where('teacher_id', '==', teacher_id).where('status', '==', 'active')
             groups = []
-            for doc in query.stream():
+            
+            # Get global default group (Sheet1) - visible to ALL teachers
+            global_query = self.groups_ref.where('teacher_id', '==', 'global').where('status', '==', 'active')
+            for doc in global_query.stream():
                 group_data = doc.to_dict()
                 group_data['group_id'] = doc.id
                 groups.append(group_data)
+            
+            # Get teacher's own groups
+            teacher_query = self.groups_ref.where('teacher_id', '==', teacher_id).where('status', '==', 'active')
+            for doc in teacher_query.stream():
+                group_data = doc.to_dict()
+                group_data['group_id'] = doc.id
+                groups.append(group_data)
+            
             return groups
         except Exception as e:
             print(f"Error getting teacher groups: {e}")
