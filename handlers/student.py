@@ -1,4 +1,4 @@
-﻿"""
+"""
 Student handlers
 All student-related functionality
 """
@@ -49,31 +49,36 @@ async def show_my_rank(message: Message, user: dict):
 
 
 @router.message(F.text.contains("Transfer"))
-async def start_transfer(message: Message):
-    """Show transfer recipients list"""
+async def start_transfer(message: Message, user: dict = None):
+    """Show group selection for transfer"""
     user_id = str(message.from_user.id)
-    students = db.get_all_users(role='student', status='active')
     
-    # Remove self from list
-    students = [s for s in students if s['user_id'] != user_id]
+    # Get all groups
+    # For students, we show ALL groups so they can transfer to anyone
+    teacher_id = '8017101114'  # TODO: make dynamic
+    groups = db.get_teacher_groups(teacher_id)
     
-    if not students:
-        await message.answer("❌ No other students available for transfer.")
+    if not groups:
+        await message.answer("❌ No groups found.")
         return
     
     await message.answer(
-        "💸 TRANSFER POINTS\n"
-        "Select recipient:",
-        reply_markup=keyboards.get_transfer_recipients_keyboard(students, user_id)
+        "💸 TRANSFER POINTS\n\n"
+        "Select group to view students:",
+        reply_markup=keyboards.get_group_selection_keyboard(groups, "transfer")
     )
 
 
 @router.message(F.text.contains("Rating"))
-async def show_rating_student(message: Message, user: dict):
+async def show_rating_student(message: Message, user: dict = None):
     """Show ranking for student's own group"""
     user_id = str(message.from_user.id)
-    student = db.get_user(user_id)
-    group_id = student.get('group_id')
+    
+    # Get fresh user data if not provided by middleware
+    if not user:
+        user = db.get_user(user_id)
+    
+    group_id = user.get('group_id') if user else None
     
     if not group_id:
         await message.answer("❌ You are not assigned to any group yet.")
@@ -181,6 +186,39 @@ async def show_support(message: Message):
 # ═══════════════════════════════════════════════════════════════════════════════
 # TRANSFER FLOW
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@router.callback_query(F.data.startswith("transfer:"))
+async def select_transfer_group(callback: CallbackQuery):
+    """Show students in selected group for transfer"""
+    # Format: transfer:group:{group_id}
+    parts = callback.data.split(":")
+    group_id = parts[2] if len(parts) > 2 else parts[1]  # Handle both formats
+    user_id = str(callback.from_user.id)
+    
+    print(f"💸 Transfer group selected: {group_id}")
+    
+    # Get students in this group
+    students = db.get_all_users(role='student', status='active', group_id=group_id)
+    
+    # Remove self from list
+    students = [s for s in students if s['user_id'] != user_id]
+    
+    if not students:
+        await callback.answer("❌ No students found in this group", show_alert=True)
+        return
+    
+    # Get group name
+    group = db.get_group(group_id)
+    group_name = group.get('name', group_id) if group else group_id
+    
+    await callback.message.edit_text(
+        f"💸 TRANSFER POINTS\n\n"
+        f"Group: {group_name}\n"
+        f"Select recipient:",
+        reply_markup=keyboards.get_transfer_recipients_keyboard(students, user_id)
+    )
+    await callback.answer()
+
 
 @router.callback_query(F.data.startswith("transfer_to:"))
 async def select_recipient(callback: CallbackQuery, state: FSMContext):

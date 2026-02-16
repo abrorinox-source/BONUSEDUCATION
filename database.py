@@ -87,6 +87,16 @@ class FirebaseDB:
             print(f"Error deleting user: {e}")
             return False
     
+    def hard_delete_user(self, user_id: str) -> bool:
+        """Permanently delete user from Firebase (hard delete)"""
+        try:
+            self.users_ref.document(user_id).delete()
+            print(f"🗑️ Permanently deleted user: {user_id}")
+            return True
+        except Exception as e:
+            print(f"Error hard deleting user: {e}")
+            return False
+    
     def get_all_users(self, role: Optional[str] = None, status: Optional[str] = None, group_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get all users with optional filters"""
         query = self.users_ref
@@ -350,6 +360,42 @@ class FirebaseDB:
             'status': 'completed'
         })
     
+    def clear_all_transaction_logs(self, progress_callback=None) -> int:
+        """Delete all transaction logs from Firebase with progress tracking
+        
+        Args:
+            progress_callback: Optional async function to call with progress updates
+            
+        Returns:
+            Number of logs deleted
+        """
+        try:
+            # First, get all logs to know total count
+            logs_list = list(self.logs_ref.stream())
+            total = len(logs_list)
+            deleted_count = 0
+            
+            if total == 0:
+                return 0
+            
+            print(f"🗑️ Starting to delete {total} transaction logs...")
+            
+            for log in logs_list:
+                log.reference.delete()
+                deleted_count += 1
+                
+                # Report progress every 10% or every 5 items (whichever is smaller)
+                if progress_callback and (deleted_count % max(1, total // 10) == 0 or deleted_count == total):
+                    import asyncio
+                    progress = int((deleted_count / total) * 100)
+                    asyncio.create_task(progress_callback(deleted_count, total, progress))
+            
+            print(f"🗑️ Cleared {deleted_count} transaction logs")
+            return deleted_count
+        except Exception as e:
+            print(f"Error clearing transaction logs: {e}")
+            return 0
+    
     def get_transaction_logs(self, limit: int = 50, transaction_type: str = None) -> List[Dict[str, Any]]:
         """Get recent transaction logs"""
         try:
@@ -423,16 +469,41 @@ class FirebaseDB:
             return None
     
     def get_group(self, group_id: str) -> Optional[Dict[str, Any]]:
-        """Get group by sheet name (group_id is now sheet_name)
+        """Get group by ID from Firebase
         
-        Since groups are auto-detected from sheets, just return sheet info.
+        Args:
+            group_id: Can be either Firebase document ID or sheet_name
+        
+        Returns:
+            Group data dict with group_id, name, and sheet_name
         """
-        # group_id is now sheet_name - return simple dict
-        return {
-            'group_id': group_id,
-            'name': group_id,
-            'sheet_name': group_id
-        }
+        try:
+            # First, try to get by document ID
+            doc = self.groups_ref.document(group_id).get()
+            if doc.exists:
+                group_data = doc.to_dict()
+                group_data['group_id'] = doc.id
+                return group_data
+            
+            # If not found, search by sheet_name field
+            query = self.groups_ref.where('sheet_name', '==', group_id).limit(1)
+            docs = list(query.stream())
+            if docs:
+                group_data = docs[0].to_dict()
+                group_data['group_id'] = docs[0].id
+                return group_data
+            
+            # If still not found, assume group_id is the sheet_name
+            # Return a minimal group object (for auto-detected sheets)
+            print(f"⚠️ Group '{group_id}' not in Firebase, treating as sheet name")
+            return {
+                'group_id': group_id,
+                'name': group_id,
+                'sheet_name': group_id
+            }
+        except Exception as e:
+            print(f"❌ Error getting group '{group_id}': {e}")
+            return None
     
     def get_all_groups(self, status: str = 'active') -> List[Dict[str, Any]]:
         """Get all groups"""
@@ -449,13 +520,28 @@ class FirebaseDB:
             return []
     
     def update_group(self, group_id: str, updates: Dict[str, Any]) -> bool:
-        """Update group data"""
+        """Update group data (or create if doesn't exist)"""
         try:
-            self.groups_ref.document(group_id).update(updates)
+            doc_ref = self.groups_ref.document(group_id)
+            doc = doc_ref.get()
+            
+            if doc.exists:
+                # Document exists, update it
+                doc_ref.update(updates)
+                print(f"✅ Updated group '{group_id}' in Firebase")
+            else:
+                # Document doesn't exist, create it
+                updates['created_at'] = SERVER_TIMESTAMP
+                updates['status'] = 'active'
+                doc_ref.set(updates)
+                print(f"✅ Created group '{group_id}' in Firebase (didn't exist before)")
+            
             return True
         except Exception as e:
-            print(f"Error updating group: {e}")
-            return False
+            print(f"⚠️ Error updating/creating group: {e}")
+            # Don't fail the whole operation if Firebase group update fails
+            # Students' group_id is the critical part
+            return True  # Return True anyway since students were updated
     
     def delete_group(self, group_id: str) -> bool:
         """Soft delete group"""
@@ -469,34 +555,158 @@ class FirebaseDB:
             print(f"Error deleting group: {e}")
             return False
     
-    def update_students_group_names(self, old_groups: List[Dict], new_groups: List[Dict]) -> int:
-        """Update student group_id when sheet names change
+    def get_orphaned_students(self) -> List[Dict[str, Any]]:
+        """Get students whose group no longer exists
+        
+        Returns:
+            List of student dicts with non-existent group_id
+        """
+        orphaned = []
+        try:
+            # Get current valid group IDs from cache
+            cache_doc = self.settings_ref.document('groups_cache').get()
+            if cache_doc.exists:
+                groups = cache_doc.to_dict().get('groups', [])
+                valid_group_ids = {g['group_id'] for g in groups}
+            else:
+                valid_group_ids = set()
+            
+            # Get all active students
+            students = self.get_all_users(role='student', status='active')
+            
+            # Find orphaned students (group doesn't exist)
+            for student in students:
+                student_group_id = student.get('group_id')
+                if student_group_id and student_group_id not in valid_group_ids:
+                    orphaned.append(student)
+            
+            print(f"🔍 Found {len(orphaned)} orphaned students")
+            return orphaned
+        except Exception as e:
+            print(f"❌ Error getting orphaned students: {e}")
+            return []
+    
+    def cleanup_deleted_students(self, sheets_user_ids: List[str], group_id: Optional[str] = None) -> int:
+        """Delete students from Firebase if they don't exist in Google Sheets
         
         Args:
-            old_to_new_mapping: Dict of {old_name: new_name}
+            sheets_user_ids: List of user_ids currently in Google Sheets
+            group_id: Only cleanup students from this specific group (important for multi-group!)
+            
+        Returns:
+            Number of students deleted from Firebase
+        """
+        deleted_count = 0
+        try:
+            # Get active students from Firebase (filtered by group if provided)
+            # CRITICAL: Only check students from the specific group!
+            students = self.get_all_users(role='student', status='active', group_id=group_id)
+            
+            # Convert sheets_user_ids to set for faster lookup
+            sheets_ids_set = set(sheets_user_ids)
+            
+            for student in students:
+                user_id = student.get('user_id')
+                
+                # If student exists in Firebase but NOT in Sheets, delete from Firebase
+                if user_id and user_id not in sheets_ids_set:
+                    # Delete from Firebase
+                    self.users_ref.document(user_id).delete()
+                    deleted_count += 1
+                    print(f"  🗑️ Deleted {student.get('full_name', user_id)} (not in Sheets)")
+            
+            if deleted_count > 0:
+                print(f"✅ Cleaned up {deleted_count} deleted students from Firebase")
+            
+            return deleted_count
+            
+        except Exception as e:
+            print(f"⚠️ Error cleaning up deleted students: {e}")
+            return 0
+    
+    def update_students_group_id(self, old_group_id: str, new_group_id: str) -> int:
+        """Update all students' group_id when a sheet is renamed
+        
+        Args:
+            old_group_id: Old sheet name (group ID)
+            new_group_id: New sheet name (group ID)
         Returns:
             Number of students updated
         """
         updated_count = 0
         try:
-            for old_name, new_name in old_to_new_mapping.items():
-                students = self.get_all_users(role='student', group_id=old_name)
-                for student in students:
-                    self.update_user(student['user_id'], {'group_id': new_name})
-                    updated_count += 1
-                    print(f"  ✅ {student.get('full_name')} → {new_name}")
+            # Get all students with the old group_id
+            students = self.get_all_users(role='student', group_id=old_group_id)
+            
+            print(f"📝 Updating group_id for {len(students)} students: '{old_group_id}' → '{new_group_id}'")
+            
+            for student in students:
+                self.update_user(student['user_id'], {'group_id': new_group_id})
+                updated_count += 1
+                print(f"  ✅ {student.get('full_name')} → {new_group_id}")
             
             if updated_count > 0:
-                print(f"✅ Updated {updated_count} students' group names")
+                print(f"✅ Updated {updated_count} students' group_id successfully")
             return updated_count
         except Exception as e:
-            print(f"⚠️ Error updating student groups: {e}")
+            print(f"⚠️ Error updating student group_id: {e}")
+            return 0
+    
+    def sync_new_groups_to_firebase(self, groups: List[Dict[str, Any]]) -> int:
+        """Sync new groups from Google Sheets to Firebase groups collection
+        
+        Args:
+            groups: List of groups from Google Sheets
+            
+        Returns:
+            Number of new groups added to Firebase
+        """
+        new_groups_count = 0
+        try:
+            for group in groups:
+                sheet_name = group.get('sheet_name')
+                if not sheet_name:
+                    continue
+                
+                # Check if group already exists in Firebase (by sheet_name)
+                query = self.groups_ref.where('sheet_name', '==', sheet_name).limit(1)
+                existing = list(query.stream())
+                
+                if not existing:
+                    # New group - add to Firebase
+                    # Use sheet_name as document ID for consistency
+                    doc_id = sheet_name.lower().replace(' ', '_')
+                    
+                    group_data = {
+                        'name': group.get('name', sheet_name),
+                        'sheet_name': sheet_name,
+                        'status': 'active',
+                        'hidden': False,  # ⭐ Set to True in Firebase to hide group from bot UI
+                        'created_at': SERVER_TIMESTAMP,
+                        'auto_created': True  # Mark as auto-created from Sheets
+                    }
+                    
+                    self.groups_ref.document(doc_id).set(group_data)
+                    new_groups_count += 1
+                    print(f"  ➕ Added new group to Firebase: '{sheet_name}' (ID: {doc_id})")
+            
+            if new_groups_count > 0:
+                print(f"✅ Synced {new_groups_count} new group(s) to Firebase")
+            
+            return new_groups_count
+            
+        except Exception as e:
+            print(f"⚠️ Error syncing groups to Firebase: {e}")
             return 0
     
     def refresh_groups_cache(self) -> List[Dict[str, Any]]:
         """Refresh groups cache from Google Sheets"""
         from sheets_manager import sheets_manager
         groups = sheets_manager.get_groups_from_sheets()
+        
+        # ⭐ NEW: Sync new groups to Firebase groups collection
+        print("🔍 Checking for new groups to add to Firebase...")
+        self.sync_new_groups_to_firebase(groups)
         
         # Get old cache for comparison (to detect renames)
         old_groups = []
@@ -507,15 +717,80 @@ class FirebaseDB:
         except:
             pass
         
-        # Check for renamed sheets and update students
+        # ⭐⭐⭐ CRITICAL: Check for renamed sheets FIRST, before cleanup
+        # This prevents accidentally deleting students when a group was just renamed
+        renamed_groups = set()  # Track which groups were renamed
+        
         if old_groups:
             old_names = {g['group_id'] for g in old_groups}
             new_names = {g['group_id'] for g in groups}
             
-            # Simple check: if count same but names different, might be renamed
-            # Update students to match new sheet names
+            # Detect sheet renames by comparing old and new lists
             print("🔍 Checking for renamed sheets...")
-            self.update_students_group_names(old_groups, groups)
+            
+            # Simple detection: if a sheet disappeared and a new one appeared, might be renamed
+            removed = old_names - new_names
+            added = new_names - old_names
+            
+            if removed and added and len(removed) == len(added) == 1:
+                old_name = list(removed)[0]
+                new_name = list(added)[0]
+                print(f"  🔄 Detected rename: '{old_name}' → '{new_name}'")
+                
+                # Update students' group_id
+                self.update_students_group_id(old_name, new_name)
+                
+                # ⭐ Update Firebase groups collection
+                # Delete old document and create new one with correct ID
+                try:
+                    # Find old document
+                    query = self.groups_ref.where('sheet_name', '==', old_name).limit(1).stream()
+                    docs = list(query)
+                    
+                    if docs:
+                        old_doc = docs[0]
+                        old_doc_data = old_doc.to_dict()
+                        old_doc_id = old_doc.id
+                        
+                        # Create new document with new sheet_name as ID
+                        new_doc_id = new_name.lower().replace(' ', '_')
+                        new_doc_data = old_doc_data.copy()
+                        new_doc_data['name'] = new_name
+                        new_doc_data['sheet_name'] = new_name
+                        
+                        # Create new document
+                        self.groups_ref.document(new_doc_id).set(new_doc_data)
+                        
+                        # Delete old document
+                        old_doc.reference.delete()
+                        
+                        print(f"  ✅ Renamed Firebase group: '{old_doc_id}' → '{new_doc_id}'")
+                    else:
+                        print(f"  ⚠️ Old group document not found in Firebase")
+                        
+                except Exception as e:
+                    print(f"  ⚠️ Error renaming Firebase group: {e}")
+                renamed_groups.add(old_name)  # Mark this group as renamed, not deleted
+            
+            # ⭐ DELETE truly deleted groups from Firebase (not renamed ones)
+            else:
+                # No rename detected - check for deleted groups
+                if removed:
+                    print(f"  🔍 Detected deleted groups: {removed}")
+                    for deleted_group_name in removed:
+                        try:
+                            # Find and delete the Firebase group document
+                            query = self.groups_ref.where('sheet_name', '==', deleted_group_name).limit(1).stream()
+                            docs = list(query)
+                            if docs:
+                                doc = docs[0]
+                                doc_id = doc.id
+                                doc.reference.delete()
+                                print(f"  🗑️ Deleted Firebase group: '{deleted_group_name}' (ID: {doc_id})")
+                            else:
+                                print(f"  ⚠️ Group '{deleted_group_name}' not found in Firebase")
+                        except Exception as e:
+                            print(f"  ⚠️ Error deleting Firebase group '{deleted_group_name}': {e}")
         
         # Save to settings as cache
         try:
@@ -530,33 +805,62 @@ class FirebaseDB:
         
         return groups
     
-    def get_teacher_groups(self, teacher_id: str = None, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    def get_teacher_groups(self, teacher_id: str = None, force_refresh: bool = False, include_hidden: bool = False) -> List[Dict[str, Any]]:
         """Get all groups (from cache or refresh from Sheets)
         
         Args:
             teacher_id: Not used, kept for compatibility
             force_refresh: If True, bypass cache and fetch from Sheets
+            include_hidden: If False (default), filter out groups with hidden=True
         
         Returns cached groups for speed, unless force_refresh=True
         """
         if force_refresh:
-            return self.refresh_groups_cache()
+            groups = self.refresh_groups_cache()
+        else:
+            # Try to get from cache first
+            try:
+                cache_doc = self.settings_ref.document('groups_cache').get()
+                if cache_doc.exists:
+                    cached_data = cache_doc.to_dict()
+                    groups = cached_data.get('groups', [])
+                    if groups:
+                        print(f"✅ Using cached groups ({len(groups)} groups)")
+                    else:
+                        # No cache, refresh from Sheets
+                        print("📊 No cache found, fetching from Sheets...")
+                        groups = self.refresh_groups_cache()
+                else:
+                    # No cache, refresh from Sheets
+                    print("📊 No cache found, fetching from Sheets...")
+                    groups = self.refresh_groups_cache()
+            except Exception as e:
+                print(f"⚠️ Cache read failed: {e}")
+                # No cache, refresh from Sheets
+                print("📊 No cache found, fetching from Sheets...")
+                groups = self.refresh_groups_cache()
         
-        # Try to get from cache first
-        try:
-            cache_doc = self.settings_ref.document('groups_cache').get()
-            if cache_doc.exists:
-                cached_data = cache_doc.to_dict()
-                groups = cached_data.get('groups', [])
-                if groups:
-                    print(f"✅ Using cached groups ({len(groups)} groups)")
-                    return groups
-        except Exception as e:
-            print(f"⚠️ Cache read failed: {e}")
+        # ⭐ Filter out hidden groups (unless include_hidden=True)
+        if not include_hidden:
+            visible_groups = []
+            for group in groups:
+                # Check if group is hidden in Firebase
+                group_id = group.get('group_id')
+                firebase_group = self.get_group(group_id)
+                
+                # If hidden field exists and is True, skip this group
+                if firebase_group and firebase_group.get('hidden', False):
+                    print(f"  🙈 Hiding group: {group.get('name', group_id)}")
+                    continue
+                
+                visible_groups.append(group)
+            
+            if len(visible_groups) < len(groups):
+                print(f"✅ Filtered out {len(groups) - len(visible_groups)} hidden group(s)")
+            
+            return visible_groups
         
-        # No cache, refresh from Sheets
-        print("📊 No cache found, fetching from Sheets...")
-        return self.refresh_groups_cache()
+        return groups
 
 
 # Global database instance

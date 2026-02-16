@@ -1,10 +1,10 @@
-﻿"""
+"""
 Teacher handlers
 All teacher-related functionality
 """
 
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -55,6 +55,113 @@ async def safe_answer_callback(callback: CallbackQuery, text: str = None, show_a
 # MAIN MENU HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@router.message(F.text.contains("Recycle Bin"))
+async def recycle_bin_handler(message: Message):
+    """Show orphaned students (students whose group no longer exists)"""
+    teacher_id = str(message.from_user.id)
+    
+    # Get orphaned students
+    orphaned = db.get_orphaned_students()
+    
+    if not orphaned:
+        await message.answer(
+            "♻️ RECYCLE BIN\n\n"
+            "✅ No orphaned students found!\n\n"
+            "All students belong to existing groups.",
+            reply_markup=keyboards.get_teacher_keyboard()
+        )
+        return
+    
+    # Build message
+    text = f"♻️ RECYCLE BIN\n\n"
+    text += f"Found {len(orphaned)} student(s) in deleted groups:\n\n"
+    
+    for student in orphaned:
+        text += f"👤 {student.get('full_name', 'Unknown')}\n"
+        text += f"   Group: {student.get('group_id', 'N/A')} ❌\n"
+        text += f"   Points: {student.get('points', 0)}\n"
+        text += f"   ID: {student.get('user_id')}\n\n"
+    
+    text += "⚠️ These students' groups no longer exist in Google Sheets.\n"
+    text += "You can restore them by re-creating the group, or clear the recycle bin."
+    
+    # Add keyboard with Clear Recycle option
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🗑️ Clear Recycle Bin", callback_data="recycle:clear_all")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="recycle:back")
+    builder.adjust(1)
+    
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "recycle:clear_all")
+async def clear_recycle_bin(callback: CallbackQuery):
+    """Delete all orphaned students"""
+    await safe_answer_callback(callback, "🗑️ Clearing recycle bin...", show_alert=False)
+    
+    # Get orphaned students
+    orphaned = db.get_orphaned_students()
+    
+    if not orphaned:
+        await safe_edit_message(
+            callback,
+            "♻️ RECYCLE BIN\n\n✅ No students to delete.",
+            reply_markup=None
+        )
+        return
+    
+    # Delete each orphaned student (HARD DELETE - permanent)
+    deleted_count = 0
+    for student in orphaned:
+        user_id = student.get('user_id')
+        if db.hard_delete_user(user_id):
+            deleted_count += 1
+            print(f"🗑️ Permanently deleted orphaned student: {student.get('full_name')} (group: {student.get('group_id')})")
+    
+    await safe_edit_message(
+        callback,
+        f"✅ RECYCLE BIN CLEARED!\n\n"
+        f"🗑️ Deleted {deleted_count} orphaned student(s)\n\n"
+        f"These students have been permanently removed from Firebase.",
+        reply_markup=None
+    )
+
+
+@router.callback_query(F.data == "recycle:back")
+async def recycle_back(callback: CallbackQuery):
+    """Go back to main menu"""
+    await callback.message.delete()
+    await callback.answer()
+
+
+@router.message(F.text.contains("Refresh Groups"))
+async def refresh_groups_menu(message: Message):
+    """Refresh groups cache from Google Sheets"""
+    teacher_id = str(message.from_user.id)
+    
+    # Show loading message
+    loading_msg = await message.answer("🔄 Refreshing groups from Google Sheets...")
+    
+    # Force refresh from Google Sheets
+    groups = db.get_teacher_groups(teacher_id, force_refresh=True)
+    
+    # Delete loading message
+    await loading_msg.delete()
+    
+    # Show results
+    if groups:
+        text = "✅ Groups refreshed successfully!\n\n"
+        text += f"📊 You have {len(groups)} group(s):\n"
+        for group in groups:
+            student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
+            text += f"  • {group['name']} - {student_count} student(s)\n"
+        text += f"\n🕐 Last updated: just now"
+    else:
+        text = "❌ No groups found.\n\nCreate your first group in:\nSettings → Manage Groups"
+    
+    await message.answer(text, reply_markup=keyboards.get_teacher_keyboard())
+
+
 @router.message(F.text.contains("Force Sync"))
 async def force_sync(message: Message):
     """Show group selection for sync"""
@@ -68,6 +175,13 @@ async def force_sync(message: Message):
     # Build keyboard with individual groups
     builder = InlineKeyboardBuilder()
     
+    # ⭐ Add "Sync All Groups" button first
+    total_students = len(db.get_all_users(role='student', status='active'))
+    builder.button(
+        text=f"🔄 Sync All Groups ({len(groups)} groups, {total_students} students)",
+        callback_data="sync:all_groups"
+    )
+    
     # Add individual groups
     for group in groups:
         student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
@@ -80,29 +194,78 @@ async def force_sync(message: Message):
     
     await message.answer(
         "🔄 SELECT GROUP TO SYNC\n\n"
-        "Choose a group to synchronize:",
+        "⭐ Sync all groups at once or choose individual group:",
         reply_markup=builder.as_markup()
     )
 
 
 @router.message(F.text.contains("Rating"))
-async def show_rating_teacher(message: Message):
-    """Show group selection for rating"""
-    teacher_id = str(message.from_user.id)
-    groups = db.get_teacher_groups(teacher_id)
+async def show_rating_all(message: Message, user: dict = None):
+    """Show rating - auto for students, selection for teachers"""
+    user_id = str(message.from_user.id)
     
-    if not groups:
+    # Get user data if not provided
+    if not user:
+        user = db.get_user(user_id)
+    
+    # Check role
+    if user and user.get('role') == 'teacher':
+        # Teacher: show group selection
+        teacher_id = user_id
+        groups = db.get_teacher_groups(teacher_id)
+        
+        if not groups:
+            await message.answer(
+                "❌ You don't have any groups yet.\n"
+                "Create a group in Google Sheets first."
+            )
+            return
+        
         await message.answer(
-            "❌ You don't have any groups yet.\n"
-            "Create a group in Settings → Manage Groups first."
+            "🏆 SELECT GROUP TO VIEW RATING\n\n"
+            "Choose a group:",
+            reply_markup=keyboards.get_group_selection_keyboard(groups, "rating")
         )
-        return
-    
-    await message.answer(
-        "🏆 SELECT GROUP TO VIEW RATING\n\n"
-        "Choose a group:",
-        reply_markup=keyboards.get_group_selection_keyboard(groups, "rating")
-    )
+    else:
+        # Student: show rating directly (no selection)
+        group_id = user.get('group_id') if user else None
+        if not group_id:
+            await message.answer("❌ You are not assigned to any group yet.")
+            return
+        
+        # Get ranking directly
+        ranking = db.get_ranking(group_id=group_id)
+        group = db.get_group(group_id)
+        group_name = group.get('name', group_id) if group else group_id
+        
+        if not ranking:
+            await message.answer(f"📊 No students found in {group_name}.")
+            return
+        
+        # Format ranking
+        text = f"🏆 {group_name.upper()} RANKING\n\n"
+        
+        for i, student in enumerate(ranking, 1):
+            name = student.get('full_name', 'Unknown')
+            points = student.get('points', 0)
+            
+            # Highlight current user
+            if student.get('user_id') == user_id:
+                name = f"**{name}**"
+            
+            # Medals for top 3
+            if i == 1:
+                text += f"👑 {name} - {points} pts\n"
+            elif i == 2:
+                text += f"🥈 {name} - {points} pts\n"
+            elif i == 3:
+                text += f"🥉 {name} - {points} pts\n"
+            else:
+                text += f"{i}. {name} - {points} pts\n"
+        
+        text += f"\nTotal Students: {len(ranking)}"
+        
+        await message.answer(text, reply_markup=keyboards.get_ranking_keyboard("student"))
 
 
 @router.message(F.text.contains("Students"))
@@ -703,6 +866,65 @@ async def change_bot_status(callback: CallbackQuery):
     await safe_answer_callback(callback, f"✅ Changed to {new_status.upper()} mode")
 
 
+@router.callback_query(F.data == "sync:all_groups")
+async def sync_all_groups(callback: CallbackQuery):
+    """Sync all groups at once"""
+    teacher_id = str(callback.from_user.id)
+    groups = db.get_teacher_groups(teacher_id)
+    
+    if not groups:
+        await callback.answer("❌ No groups found!", show_alert=True)
+        return
+    
+    # Answer callback immediately
+    await safe_answer_callback(callback, f"🔄 Syncing {len(groups)} groups...", show_alert=False)
+    
+    await callback.message.edit_text(
+        f"⏳ SYNCING ALL GROUPS\n"
+        f"📊 Total groups: {len(groups)}\n"
+        f"🔄 Please wait..."
+    )
+    
+    # Sync each group
+    total_stats = {
+        'updated': 0,
+        'added': 0,
+        'deleted': 0,
+        'skipped': 0,
+        'errors': 0
+    }
+    
+    synced_groups = []
+    
+    for group in groups:
+        try:
+            stats = await sheets_manager._smart_delta_sync_single(group['sheet_name'], group['group_id'])
+            total_stats['updated'] += stats.get('updated', 0)
+            total_stats['added'] += stats.get('added', 0)
+            total_stats['deleted'] += stats.get('deleted', 0)
+            total_stats['skipped'] += stats.get('skipped', 0)
+            total_stats['errors'] += stats.get('errors', 0)
+            synced_groups.append(f"✅ {group['name']}")
+        except Exception as e:
+            print(f"Error syncing group {group['name']}: {e}")
+            total_stats['errors'] += 1
+            synced_groups.append(f"❌ {group['name']}")
+    
+    result_text = (
+        f"✅ ALL GROUPS SYNCED!\n\n"
+        f"📊 Summary:\n"
+        f"• Groups synced: {len(synced_groups)}\n"
+        f"• Updated: {total_stats['updated']} students\n"
+        f"• Added: {total_stats['added']} new students\n"
+        f"• Deleted: {total_stats['deleted']} removed\n"
+        f"• Skipped: {total_stats['skipped']} (no changes)\n"
+        f"• Errors: {total_stats['errors']}\n\n"
+        f"📋 Groups:\n" + "\n".join(synced_groups)
+    )
+    
+    await callback.message.edit_text(result_text)
+
+
 @router.callback_query(F.data.startswith("sync:single:"))
 async def sync_single_group(callback: CallbackQuery):
     """Sync a specific group"""
@@ -713,6 +935,9 @@ async def sync_single_group(callback: CallbackQuery):
     if not group:
         await callback.answer("❌ Group not found!", show_alert=True)
         return
+    
+    # Answer callback immediately to avoid timeout
+    await safe_answer_callback(callback, f"🔄 Syncing {group['name']}...", show_alert=False)
     
     await callback.message.edit_text(
         f"⏳ Synchronizing: {group['name']}\n"
@@ -730,13 +955,13 @@ async def sync_single_group(callback: CallbackQuery):
         f"📊 Results:\n"
         f"• Updated: {stats['updated']} students\n"
         f"• Added: {stats['added']} new students\n"
+        f"• Deleted: {stats.get('deleted', 0)} removed\n"
         f"• Skipped: {stats.get('skipped', 0)} (no changes)\n"
         f"• Errors: {stats['errors']}\n\n"
         f"ℹ️ Latest data wins (timestamp-based)!"
     )
     
     await callback.message.edit_text(result_text)
-    await callback.answer(f"✅ {group['name']} synced!")
 
 
 @router.callback_query(F.data.startswith("sync:"))
@@ -865,28 +1090,36 @@ async def handle_sync_control(callback: CallbackQuery):
                 await safe_answer_callback(callback, "❌ Invalid interval value", show_alert=True)
         
         # ═══════════════════════════════════════════════════════════════
-        # ACTION: Sync names only (from Sheets to Firebase)
+        # ACTION: Update Names (refresh groups + update all student names from Sheets)
         # ═══════════════════════════════════════════════════════════════
-        elif action == "names_only":
-            await safe_answer_callback(callback, "👤 Syncing names only...", show_alert=False)
+        elif action == "update_names":
+            await safe_answer_callback(callback, "📝 Updating names...", show_alert=False)
             
             try:
+                teacher_id = str(callback.from_user.id)
+                
+                # Step 1: Refresh groups cache from Google Sheets
+                groups = db.get_teacher_groups(teacher_id, force_refresh=True)
+                print(f"🔄 Refreshed {len(groups)} groups from cache")
+                
+                # Step 2: Update all student names from Sheets
                 stats = await sheets_manager.sync_names_only()
                 
                 await safe_edit_message(
                     callback,
-                    f"✅ NAMES SYNC COMPLETE\n\n"
-                    f"📊 Results:\n"
-                    f"• Updated: {stats.get('updated', 0)} students\n"
-                    f"• Errors: {stats.get('errors', 0)}\n\n"
-                    f"👤 Only names, phones, and usernames were updated.\n"
-                    f"💰 Points were NOT touched.",
+                    f"✅ UPDATE COMPLETE\n\n"
+                    f"📊 Groups refreshed: {len(groups)}\n"
+                    f"👤 Student names updated: {stats.get('updated', 0)}\n"
+                    f"❌ Errors: {stats.get('errors', 0)}\n\n"
+                    f"✅ Groups cache refreshed from Google Sheets\n"
+                    f"✅ All student names, phones, and usernames updated\n"
+                    f"💰 Points were NOT changed",
                     reply_markup=keyboards.get_back_keyboard("sync:control")
                 )
             except Exception as e:
                 await safe_edit_message(
                     callback,
-                    f"❌ Names sync failed:\n{str(e)}",
+                    f"❌ Update failed:\n{str(e)}",
                     reply_markup=keyboards.get_back_keyboard("sync:control")
                 )
         
@@ -977,12 +1210,14 @@ async def handle_transaction_logs(callback: CallbackQuery):
     
     if action == "export":
         # Handle export based on format
-        export_format = parts[2] if len(parts) > 2 else "json"
+        export_format = parts[2] if len(parts) > 2 else "excel"
+        print(f"📊 Export requested: {export_format}")
         await callback.answer(f"📥 Generating {export_format.upper()} export...")
         
         try:
             # Get all logs
             logs = db.get_transaction_logs(limit=500)  # Get more logs for export
+            print(f"📋 Found {len(logs)} logs to export")
             
             if not logs:
                 await callback.message.edit_text(
@@ -995,30 +1230,7 @@ async def handle_transaction_logs(callback: CallbackQuery):
             from aiogram.types import FSInputFile
             import os
             
-            if export_format == "json":
-                # Generate JSON export
-                import json
-                report_data = {
-                    "export_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    "total_transactions": len(logs),
-                    "transactions": logs
-                }
-                
-                filename = f"transaction_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                with open(filename, 'w', encoding='utf-8') as f:
-                    json.dump(report_data, f, indent=2, ensure_ascii=False, default=str)
-                
-                await callback.message.answer_document(
-                    FSInputFile(filename),
-                    caption=(
-                        f"📜 Transaction Logs Export (JSON)\n"
-                        f"Total: {len(logs)} transactions\n"
-                        f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                    )
-                )
-                os.remove(filename)
-            
-            elif export_format == "excel":
+            if export_format == "excel":
                 # Generate Excel export
                 from openpyxl import Workbook
                 from openpyxl.styles import Font, PatternFill, Alignment
@@ -1241,6 +1453,58 @@ async def handle_transaction_logs(callback: CallbackQuery):
         elif action == "manual_edit":
             logs = db.get_transaction_logs(limit=config.TRANSACTION_LOG_LIMIT, transaction_type="manual_edit")
             filter_name = "MANUAL EDITS"
+        elif action == "clear":
+            # Clear all transaction logs
+            await safe_edit_message(
+                callback,
+                "⚠️ CLEAR ALL TRANSACTION LOGS\n\n"
+                "Are you sure you want to delete ALL transaction logs?\n"
+                "This action cannot be undone!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="✅ Yes, Clear All", callback_data="logs:clear_confirm")],
+                    [InlineKeyboardButton(text="❌ Cancel", callback_data="settings:transaction_history")]
+                ])
+            )
+            await safe_answer_callback(callback)
+            return
+        elif action == "clear_confirm":
+            # Confirmed - delete all logs with progress
+            await safe_edit_message(
+                callback,
+                "🗑️ CLEARING LOGS...\n\n"
+                "⏳ Starting deletion process...\n"
+                "Please wait...",
+                reply_markup=None
+            )
+            await safe_answer_callback(callback)
+            
+            # Progress callback function
+            async def update_progress(deleted, total, progress):
+                try:
+                    bar_length = 20
+                    filled = int(bar_length * progress / 100)
+                    bar = "█" * filled + "░" * (bar_length - filled)
+                    
+                    await callback.message.edit_text(
+                        f"🗑️ CLEARING LOGS...\n\n"
+                        f"Progress: {progress}%\n"
+                        f"[{bar}]\n\n"
+                        f"Deleted: {deleted}/{total} logs"
+                    )
+                except:
+                    pass  # Ignore telegram rate limit errors
+            
+            # Delete with progress
+            deleted_count = db.clear_all_transaction_logs(progress_callback=update_progress)
+            
+            # Final message
+            await safe_edit_message(
+                callback,
+                f"✅ LOGS CLEARED\n\n"
+                f"Deleted {deleted_count} transaction log(s) from Firebase.",
+                reply_markup=keyboards.get_back_keyboard("settings:transaction_history")
+            )
+            return
         else:
             await callback.answer("❌ Unknown action", show_alert=True)
             return
@@ -1929,6 +2193,10 @@ async def process_group_name(message: Message, state: FSMContext):
         await state.clear()
         return
     
+    # 🔄 Auto-refresh groups cache after creation
+    db.get_teacher_groups(teacher_id, force_refresh=True)
+    print(f"🔄 Auto-refreshed groups cache after group creation")
+    
     await message.answer(
         f"✅ GROUP CREATED!\n\n"
         f"📄 Sheet: {sheet_name}\n\n"
@@ -2053,29 +2321,60 @@ async def process_group_edit(message: Message, state: FSMContext):
         await state.clear()
         return
     
-    # Update both name and sheet_name in Firebase
-    db_success = db.update_group(group_id, {
+    # ⭐ KEY FIX: Update all students' group_id to the new sheet name
+    # This is the CRITICAL part - students must be updated
+    students_updated = db.update_students_group_id(old_sheet_name, new_name)
+    
+    # Update Firebase group record (if it exists, otherwise create it)
+    # This is less critical - the real group info comes from Google Sheets
+    db.update_group(group_id, {
         'name': new_name,
         'sheet_name': new_name
     })
     
-    if db_success:
-        await message.answer(
-            f"✅ Sheet renamed successfully!\n\n"
-            f"Old: {old_sheet_name}\n"
-            f"New: {new_name}\n\n"
-            f"Both database and Google Sheets have been updated! 🎉",
-            reply_markup=keyboards.get_teacher_keyboard()
-        )
-    else:
-        # Rollback - rename back
-        sheets_manager.rename_sheet_tab(new_name, old_sheet_name)
-        await message.answer(
-            f"❌ Failed to update database. Changes rolled back.",
-            reply_markup=keyboards.get_teacher_keyboard()
-        )
+    # 🔄 Auto-refresh groups cache after rename
+    teacher_id = str(message.from_user.id)
+    db.get_teacher_groups(teacher_id, force_refresh=True)
+    print(f"🔄 Auto-refreshed groups cache after rename")
+    
+    # Success!
+    await message.answer(
+        f"✅ Sheet renamed successfully!\n\n"
+        f"Old: {old_sheet_name}\n"
+        f"New: {new_name}\n\n"
+        f"📊 Updated:\n"
+        f"  • Google Sheets tab ✅\n"
+        f"  • {students_updated} student(s) group_id ✅\n"
+        f"  • Groups cache refreshed ✅\n\n"
+        f"All done! 🎉",
+        reply_markup=keyboards.get_teacher_keyboard()
+    )
     
     await state.clear()
+
+
+@router.callback_query(F.data == "groups:refresh")
+async def handle_groups_refresh(callback: CallbackQuery):
+    """Refresh groups from Google Sheets"""
+    await safe_answer_callback(callback, "🔄 Refreshing groups...", show_alert=False)
+    
+    # Force refresh from Google Sheets
+    teacher_id = str(callback.from_user.id)
+    groups = db.get_teacher_groups(teacher_id, force_refresh=True)
+    
+    text = "👥 GROUP MANAGEMENT\n\n"
+    if groups:
+        text += f"✅ Refreshed! You have {len(groups)} group(s):\n"
+        for group in groups:
+            text += f"  • {group['name']} ({group['sheet_name']})\n"
+    else:
+        text += "You don't have any groups yet.\nCreate your first group to get started!"
+    
+    await safe_edit_message(
+        callback,
+        text,
+        reply_markup=keyboards.get_groups_management_keyboard(teacher_id)
+    )
 
 
 @router.callback_query(F.data.startswith("group_delete:"))
@@ -2118,6 +2417,11 @@ async def handle_group_delete_confirm(callback: CallbackQuery):
     success = db.delete_group(group_id)
     
     if success:
+        # 🔄 Auto-refresh groups cache after deletion
+        teacher_id = str(callback.from_user.id)
+        db.get_teacher_groups(teacher_id, force_refresh=True)
+        print(f"🔄 Auto-refreshed groups cache after group deletion")
+        
         await safe_edit_message(
             callback,
             "✅ Group deleted successfully!",

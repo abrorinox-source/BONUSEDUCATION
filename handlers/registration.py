@@ -1,4 +1,4 @@
-﻿"""
+"""
 Registration handlers
 Handles user registration flow
 """
@@ -169,13 +169,20 @@ async def process_contact(message: Message, state: FSMContext):
         await message.answer("❌ Please share your contact using the button below:")
         return
     
-    # Save contact to FSM
-    await state.update_data(phone=message.contact.phone_number)
+    # Save contact, username, and user_id to FSM
+    # ⭐ CRITICAL: Save these now while message.from_user is the STUDENT
+    await state.update_data(
+        phone=message.contact.phone_number,
+        username=message.from_user.username or '',
+        user_id=str(message.from_user.id)
+    )
     
-    # Check if there are any groups
-    groups = db.get_all_groups(status='active')
+    # Check if there are any groups from Google Sheets
+    # ⭐ Use teacher's groups from Google Sheets (not Firebase groups collection)
+    teacher_id = '8017101114'  # Hardcoded for now, TODO: make dynamic
+    groups = db.get_teacher_groups(teacher_id)
     
-    if groups:
+    if groups and len(groups) > 0:
         # Show group selection
         await message.answer(
             "📚 SELECT YOUR CLASS/GROUP\n\n"
@@ -185,35 +192,49 @@ async def process_contact(message: Message, state: FSMContext):
         await state.set_state(states.RegistrationStates.waiting_for_group)
     else:
         # No groups - complete registration without group
+        print("⚠️ No groups found for registration")
         await complete_registration(message, state, group_id=None)
 
 
 @router.callback_query(F.data.startswith("select_group:"))
 async def process_group_selection(callback: CallbackQuery, state: FSMContext):
     """Process group selection"""
-    group_id = callback.data.split(":")[1]
+    firebase_group_id = callback.data.split(":")[1]
     
     # Verify group exists
-    group = db.get_group(group_id)
+    group = db.get_group(firebase_group_id)
     if not group:
         await callback.answer("❌ Group not found!", show_alert=True)
         return
     
-    # Complete registration with selected group
-    await complete_registration(callback.message, state, group_id=group_id, group_name=group['name'])
+    # ⭐ CRITICAL: Use sheet_name as group_id for students
+    # This ensures students are added to the correct Google Sheets tab
+    sheet_name = group.get('sheet_name', firebase_group_id)
+    
+    print(f"📝 Registration group selection:")
+    print(f"   Firebase group_id: {firebase_group_id}")
+    print(f"   Group name: {group.get('name')}")
+    print(f"   Sheet name: {sheet_name}")
+    print(f"   Saving to student as group_id: {sheet_name}")
+    
+    # Complete registration with sheet_name as group_id
+    await complete_registration(callback.message, state, group_id=sheet_name, group_name=group['name'])
     await callback.answer(f"✅ Selected: {group['name']}")
 
 
 async def complete_registration(message: Message, state: FSMContext, group_id: str = None, group_name: str = None):
     """Complete student registration"""
     data = await state.get_data()
-    user_id = str(message.from_user.id)
+    # ⭐ Get user_id and username from FSM data (not from message.from_user)
+    # This is critical because when called from callback, message.from_user is the BOT!
+    user_id = data.get('user_id', str(message.from_user.id))
+    username = data.get('username', '')
     
     # Create student record
     student_data = {
         'full_name': data['full_name'],
         'phone': data['phone'],
-        'username': message.from_user.username or '',
+        'username': username,
         'role': 'student',
         'status': 'pending',
         'points': 0
@@ -222,7 +243,9 @@ async def complete_registration(message: Message, state: FSMContext, group_id: s
     # Add group_id if provided
     if group_id:
         student_data['group_id'] = group_id
+        print(f"📝 Complete registration - Setting group_id: {group_id}")
     
+    print(f"📝 Creating user {user_id} with data: {student_data}")
     db.create_user(user_id, student_data)
     
     # Notify student
@@ -311,11 +334,33 @@ async def approve_student(callback: CallbackQuery):
     """Approve student registration"""
     user_id = callback.data.split(":")[1]
     
-    # Update status
+    # Get user data first
+    user = db.get_user(user_id)
+    if not user:
+        await callback.answer("❌ User not found!", show_alert=True)
+        return
+    
+    # Update status to active
     db.update_user(user_id, {'status': 'active'})
     
-    # Note: User will be added to Sheets by background sync
-    user = db.get_user(user_id)
+    # ⭐ CRITICAL FIX: Add to Google Sheets IMMEDIATELY
+    # This prevents cleanup from deleting the user before background sync runs
+    try:
+        from sheets_manager import sheets_manager
+        group_id = user.get('group_id')
+        if group_id:
+            # Add user to their group's sheet
+            user_data = {
+                'user_id': user_id,
+                'full_name': user.get('full_name', ''),
+                'phone': user.get('phone', ''),
+                'username': user.get('username', ''),
+                'points': 0
+            }
+            sheets_manager.add_user(user_data, sheet_name=group_id)
+            print(f"✅ Added approved student to Sheets: {user['full_name']} → {group_id}")
+    except Exception as e:
+        print(f"⚠️ Error adding student to Sheets (will sync later): {e}")
     
     # Notify student
     try:

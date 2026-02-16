@@ -426,13 +426,19 @@ class GoogleSheetsManager:
             stats = {'updated': 0, 'added': 0, 'deleted': 0, 'errors': 0, 'skipped': 0}
             
             try:
-                # Get all active Firebase users (filtered by group if provided)
-                firebase_active_users = db.get_all_users(role='student', status='active', group_id=group_id)
-                firebase_active_ids = {u['user_id'] for u in firebase_active_users}
-                
-                # Fetch from Sheets (specific sheet tab)
+                # Fetch from Sheets FIRST (specific sheet tab)
                 sheets_data = self.fetch_all_data(sheet_name=sheet_name)
                 sheets_user_ids = {row['user_id'] for row in sheets_data}
+                
+                # 🗑️ CRITICAL CLEANUP FIRST: Delete students from Firebase if they're not in Sheets
+                # This MUST happen BEFORE sync to avoid re-adding deleted students
+                # IMPORTANT: Only delete students from THIS group, not all students
+                sheets_user_ids_list = list(sheets_user_ids)
+                deleted_count = db.cleanup_deleted_students(sheets_user_ids_list, group_id=group_id)
+                
+                # Get all active Firebase users AFTER cleanup (filtered by group if provided)
+                firebase_active_users = db.get_all_users(role='student', status='active', group_id=group_id)
+                firebase_active_ids = {u['user_id'] for u in firebase_active_users}
                 
                 # Remove deleted/banned users from Sheets
                 users_to_delete = sheets_user_ids - firebase_active_ids
@@ -578,6 +584,9 @@ class GoogleSheetsManager:
                         stats['updated'] += 1
                         print(f"⚠️ No timestamps, using Firebase points, Sheets names: {user_name} → {firebase_points}")
                 
+                # Cleanup stats already tracked at the beginning
+                stats['deleted'] += deleted_count
+                
                 # Update sync statistics
                 settings = db.get_settings()
                 sync_stats = settings.get('sync_statistics', {
@@ -595,7 +604,7 @@ class GoogleSheetsManager:
                     'sync_statistics': sync_stats
                 })
                 
-                print(f"🔄 Sync complete: {stats['updated']} updated, {stats['added']} added, {stats['skipped']} skipped")
+                print(f"🔄 Sync complete: {stats['updated']} updated, {stats['added']} added, {stats['deleted']} deleted, {stats['skipped']} skipped")
                 return stats
             
             except Exception as e:

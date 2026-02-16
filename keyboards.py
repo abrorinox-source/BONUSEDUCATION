@@ -18,12 +18,14 @@ def get_teacher_keyboard() -> ReplyKeyboardMarkup:
     """Teacher main menu keyboard"""
     builder = ReplyKeyboardBuilder()
     
+    builder.button(text="🔄 Refresh Groups")
     builder.button(text=f"{config.EMOJIS['force_sync']} Force Sync")
     builder.button(text=f"{config.EMOJIS['rating']} Rating")
     builder.button(text=f"{config.EMOJIS['students']} Students")
+    builder.button(text="♻️ Recycle Bin")
     builder.button(text=f"{config.EMOJIS['settings']} Settings")
     
-    builder.adjust(2, 2)
+    builder.adjust(2, 2, 2)
     
     return builder.as_markup(resize_keyboard=True)
 
@@ -104,17 +106,18 @@ def get_settings_keyboard() -> InlineKeyboardMarkup:
     """Settings menu keyboard"""
     builder = InlineKeyboardBuilder()
     
-    builder.button(text="👥 Manage Groups", callback_data="settings:groups")
+    # ❌ Removed: Manage Groups (everything done via Google Sheets now)
+    # builder.button(text="👥 Manage Groups", callback_data="settings:groups")
     builder.button(text="💰 Transfer Commission", callback_data="settings:commission")
     builder.button(text="🔓 Bot Status", callback_data="settings:bot_status")
     builder.button(text="🔄 Sync Control", callback_data="settings:sync_control")
     builder.button(text="📜 Transaction History", callback_data="settings:transaction_history")
-    builder.button(text="📥 Export Data", callback_data="settings:export")
+    # ❌ Removed: builder.button(text="📥 Export Data", callback_data="settings:export")
     builder.button(text="📝 Edit Rules", callback_data="settings:edit_rules")
     builder.button(text="📢 Global Broadcast", callback_data="settings:broadcast")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(2, 2, 2, 2, 1)
+    builder.adjust(2, 2, 1, 1, 1)  # Adjusted after removing Manage Groups
     
     return builder.as_markup()
 
@@ -144,15 +147,15 @@ def get_sync_control_keyboard(sync_enabled: bool) -> InlineKeyboardMarkup:
     
     builder.button(text="⏱️ Change Interval", callback_data="sync:interval")
     
-    # Separate sync buttons
-    builder.button(text="👤 Sync Names Only", callback_data="sync:names_only")
-    builder.button(text="💰 Sync Points Only", callback_data="sync:points_only")
+    # Update button
+    builder.button(text="📝 Update Names", callback_data="sync:update_names")
+    # ❌ Removed: builder.button(text="💰 Sync Points Only", callback_data="sync:points_only")
     
-    builder.button(text="📥 Force: Sheets → Firebase", callback_data="sync:force_sheets")
+    # ❌ Removed: builder.button(text="📥 Force: Sheets → Firebase", callback_data="sync:force_sheets")
     
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(1, 1, 2, 1, 1)
+    builder.adjust(1, 1, 1, 1)
     
     return builder.as_markup()
 
@@ -184,9 +187,10 @@ def get_transaction_history_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="➖ Subtracted Points", callback_data="logs:subtract_points")
     builder.button(text="✏️ Manual Edits", callback_data="logs:manual_edit")
     builder.button(text="📊 Export Logs", callback_data="logs:export_menu")
+    builder.button(text="🗑️ Clear All Logs", callback_data="logs:clear")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(2, 2, 2, 1)
+    builder.adjust(2, 2, 2, 1, 1)
     
     return builder.as_markup()
 
@@ -196,11 +200,10 @@ def get_logs_export_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.button(text="📋 Excel (XLSX)", callback_data="logs:export:excel")
-    builder.button(text="📄 JSON", callback_data="logs:export:json")
     builder.button(text="📈 PDF Report", callback_data="logs:export:pdf")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:transaction_history")
     
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1)
     
     return builder.as_markup()
 
@@ -268,14 +271,13 @@ def get_ranking_keyboard(user_role: str = "student") -> InlineKeyboardMarkup:
     """Ranking view keyboard"""
     builder = InlineKeyboardBuilder()
     
-    builder.button(text="🔄 Refresh", callback_data="ranking:refresh")
-    
+    # Only Back button - user can press Rating again to refresh
     if user_role == "teacher":
         builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:menu")
     else:
         builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="student:menu")
     
-    builder.adjust(2)
+    builder.adjust(1)
     
     return builder.as_markup()
 

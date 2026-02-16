@@ -14,6 +14,7 @@ google-auth-httplib2==0.2.0
 # Data Export
 openpyxl==3.1.2
 reportlab==4.0.8
+numpy<2.0  # reportlab compatibility
 
 # Utilities
 python-dotenv==1.0.0
