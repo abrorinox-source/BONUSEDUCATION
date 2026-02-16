@@ -13,10 +13,10 @@ load_dotenv()
 # CREDENTIALS (from environment variables)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BOT_TOKEN = os.getenv('BOT_TOKEN', "8466410998:AAFUo6iKrDN8YUTzYUkieJ_eQ76cnC5_Jps")
+BOT_TOKEN = os.getenv('BOT_TOKEN', "")
 FIREBASE_KEY_PATH = os.getenv('FIREBASE_KEY_PATH', 'serviceAccountKey.json')
-SHEET_ID = os.getenv('SHEET_ID', "1SsUnFwqDc1bj46LwHb0OtwPZkCyU3Ip4A96xSjWZzRo")
-TEACHER_CODE = os.getenv('TEACHER_CODE', '11991188')
+SHEET_ID = os.getenv('SHEET_ID', "")
+TEACHER_CODE = os.getenv('TEACHER_CODE', '')
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BOT SETTINGS
