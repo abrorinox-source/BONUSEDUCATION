@@ -14,7 +14,7 @@ from database import db
 # REPLY KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_teacher_keyboard() -> ReplyKeyboardMarkup:
+def get_teacher_keyboard(pending_count: int = 0) -> ReplyKeyboardMarkup:
     """Teacher main menu keyboard"""
     builder = ReplyKeyboardBuilder()
     
@@ -25,7 +25,11 @@ def get_teacher_keyboard() -> ReplyKeyboardMarkup:
     builder.button(text="♻️ Recycle Bin")
     builder.button(text=f"{config.EMOJIS['settings']} Settings")
     
-    builder.adjust(2, 2, 2)
+    # Pending button — only shown if there are pending approvals
+    pending_text = f"⏳ Pending ({pending_count})" if pending_count > 0 else "⏳ Pending"
+    builder.button(text=pending_text)
+    
+    builder.adjust(2, 2, 2, 1)
     
     return builder.as_markup(resize_keyboard=True)
 
@@ -66,14 +70,55 @@ def get_skip_keyboard() -> ReplyKeyboardMarkup:
 # INLINE KEYBOARDS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_approval_keyboard(user_id: str) -> InlineKeyboardMarkup:
+def get_approval_keyboard(user_id: str, from_pending: bool = False) -> InlineKeyboardMarkup:
     """Approval keyboard for teacher"""
     builder = InlineKeyboardBuilder()
     
     builder.button(text=f"{config.EMOJIS['approve']} Approve", callback_data=f"approve:{user_id}")
     builder.button(text=f"{config.EMOJIS['reject']} Reject", callback_data=f"reject:{user_id}")
+    if from_pending:
+        builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:pending")
     
-    builder.adjust(2)
+    builder.adjust(2, 1) if from_pending else builder.adjust(2)
+    
+    return builder.as_markup()
+
+
+def get_pending_list_keyboard(pending_users: List[Dict[str, Any]], page: int = 0, page_size: int = 5) -> InlineKeyboardMarkup:
+    """Pending approvals list keyboard"""
+    builder = InlineKeyboardBuilder()
+    
+    total = len(pending_users)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = page * page_size
+    end = start + page_size
+    page_users = pending_users[start:end]
+    
+    for user in page_users:
+        name = user.get('full_name', 'Unknown')
+        status = user.get('status', '')
+        icon = "🔄" if status == 'pending_restore' else "🆕"
+        builder.button(
+            text=f"{icon} {name}",
+            callback_data=f"pending_detail:{user.get('user_id', '')}"
+        )
+    
+    # Pagination
+    nav_buttons = 0
+    if page > 0:
+        builder.button(text="« Oldingi", callback_data=f"pending_page:{page - 1}")
+        nav_buttons += 1
+    if end < total:
+        builder.button(text="Keyingi »", callback_data=f"pending_page:{page + 1}")
+        nav_buttons += 1
+    
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:menu")
+    
+    row_sizes = [1] * len(page_users)
+    if nav_buttons > 0:
+        row_sizes.append(nav_buttons)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
     
     return builder.as_markup()
 
@@ -86,6 +131,19 @@ def get_restore_approval_keyboard(user_id: str) -> InlineKeyboardMarkup:
     builder.button(text=f"{config.EMOJIS['reject']} Reject (Permanent Ban)", callback_data=f"restore_reject:{user_id}")
     
     builder.adjust(1, 1)
+    
+    return builder.as_markup()
+
+
+def get_restore_approval_keyboard_with_back(user_id: str) -> InlineKeyboardMarkup:
+    """Restore approval keyboard with back button (from pending list)"""
+    builder = InlineKeyboardBuilder()
+    
+    builder.button(text=f"{config.EMOJIS['approve']} Restore Account", callback_data=f"restore_approve:{user_id}")
+    builder.button(text=f"{config.EMOJIS['reject']} Reject (Permanent Ban)", callback_data=f"restore_reject:{user_id}")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:pending")
+    
+    builder.adjust(1, 1, 1)
     
     return builder.as_markup()
 

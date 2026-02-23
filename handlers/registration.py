@@ -506,7 +506,7 @@ async def show_teacher_menu(message: Message, user: dict):
         total_points=total_points
     )
     
-    await message.answer(text, reply_markup=keyboards.get_teacher_keyboard())
+    await message.answer(text, reply_markup=keyboards.get_teacher_keyboard(pending_count=pending_approvals))
 
 
 async def show_student_menu(message: Message, user: dict):

@@ -781,6 +781,120 @@ async def back_to_teacher_menu(callback: CallbackQuery):
     await safe_answer_callback(callback)
 
 
+@router.callback_query(F.data == "teacher:pending")
+async def show_pending_callback(callback: CallbackQuery):
+    """Show pending approvals from callback"""
+    pending = db.get_pending_approvals()
+    
+    if not pending:
+        await safe_edit_message(
+            callback,
+            "✅ Hozircha tasdiq kutayotgan o'quvchi yo'q!",
+            reply_markup=keyboards.get_back_keyboard("teacher:menu")
+        )
+        await callback.answer()
+        return
+    
+    await safe_edit_message(
+        callback,
+        f"⏳ TASDIQ KUTAYOTGANLAR ({len(pending)})\n\n"
+        f"🆕 — yangi ro'yxat\n"
+        f"🔄 — tiklash so'rovi\n\n"
+        f"O'quvchini tanlang:",
+        reply_markup=keyboards.get_pending_list_keyboard(pending, page=0)
+    )
+    await callback.answer()
+
+
+@router.message(F.text.contains("Pending"))
+async def show_pending(message: Message):
+    """Show pending approvals list"""
+    pending = db.get_pending_approvals()
+    
+    if not pending:
+        await message.answer(
+            "✅ Hozircha tasdiq kutayotgan o'quvchi yo'q!",
+            reply_markup=keyboards.get_teacher_keyboard(pending_count=0)
+        )
+        return
+    
+    await message.answer(
+        f"⏳ TASDIQ KUTAYOTGANLAR ({len(pending)})\n\n"
+        f"🆕 — yangi ro'yxat\n"
+        f"🔄 — tiklash so'rovi\n\n"
+        f"O'quvchini tanlang:",
+        reply_markup=keyboards.get_pending_list_keyboard(pending, page=0)
+    )
+
+
+@router.callback_query(F.data.startswith("pending_detail:"))
+async def show_pending_detail(callback: CallbackQuery):
+    """Show pending student detail with approve/reject buttons"""
+    user_id = callback.data.split(":")[1]
+    user = db.get_user(user_id)
+    
+    if not user:
+        await callback.answer("❌ Foydalanuvchi topilmadi!", show_alert=True)
+        return
+    
+    status = user.get('status', '')
+    is_restore = status == 'pending_restore'
+    
+    group_id = user.get('group_id', '')
+    group = db.get_group(group_id) if group_id else None
+    group_name = group.get('name', group_id) if group else "Yo'q"
+    
+    icon = "🔄 TIKLASH SO'ROVI" if is_restore else "🆕 YANGI RO'YXAT"
+    
+    text = (
+        f"{icon}\n\n"
+        f"👤 Ism: {user.get('full_name', 'N/A')}\n"
+        f"📱 Telefon: {user.get('phone', 'N/A')}\n"
+        f"🔗 Username: @{user.get('username', 'N/A')}\n"
+        f"👥 Guruh: {group_name}\n"
+        f"🆔 ID: {user_id}\n"
+    )
+    
+    if is_restore:
+        text += f"\n⚠️ Oldingi ball: {user.get('points', 0)}"
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.get_restore_approval_keyboard_with_back(user_id)
+        )
+    else:
+        await callback.message.edit_text(
+            text,
+            reply_markup=keyboards.get_approval_keyboard(user_id, from_pending=True)
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pending_page:"))
+async def pending_page_handler(callback: CallbackQuery):
+    """Handle pending list pagination"""
+    page = int(callback.data.split(":")[1])
+    pending = db.get_pending_approvals()
+    
+    if not pending:
+        await safe_edit_message(
+            callback,
+            "✅ Hozircha tasdiq kutayotgan o'quvchi yo'q!",
+            reply_markup=keyboards.get_back_keyboard("teacher:menu")
+        )
+        await callback.answer()
+        return
+    
+    await safe_edit_message(
+        callback,
+        f"⏳ TASDIQ KUTAYOTGANLAR ({len(pending)})\n\n"
+        f"🆕 — yangi ro'yxat\n"
+        f"🔄 — tiklash so'rovi\n\n"
+        f"O'quvchini tanlang:",
+        reply_markup=keyboards.get_pending_list_keyboard(pending, page=page)
+    )
+    await callback.answer()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SETTINGS HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
