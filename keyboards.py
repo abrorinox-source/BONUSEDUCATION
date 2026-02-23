@@ -208,11 +208,17 @@ def get_logs_export_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "detail") -> InlineKeyboardMarkup:
-    """Students list keyboard"""
+def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "detail", page: int = 0, page_size: int = 10) -> InlineKeyboardMarkup:
+    """Students list keyboard with pagination"""
     builder = InlineKeyboardBuilder()
     
-    for student in students[:10]:  # Show first 10
+    total = len(students)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = page * page_size
+    end = start + page_size
+    page_students = students[start:end]
+    
+    for student in page_students:
         name = student.get('full_name', 'Unknown')
         points = student.get('points', 0)
         user_id = student.get('user_id', '')
@@ -222,9 +228,23 @@ def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "de
             callback_data=f"student_{action}:{user_id}"
         )
     
+    # Pagination row
+    nav_buttons = 0
+    if page > 0:
+        builder.button(text="« Oldingi", callback_data=f"students_page:{page - 1}")
+        nav_buttons += 1
+    if end < total:
+        builder.button(text="Keyingi »", callback_data=f"students_page:{page + 1}")
+        nav_buttons += 1
+    
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:menu")
     
-    builder.adjust(1)
+    # Adjust: each student on own row, then nav buttons together, then back
+    row_sizes = [1] * len(page_students)
+    if nav_buttons > 0:
+        row_sizes.append(nav_buttons)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
     
     return builder.as_markup()
 
@@ -243,14 +263,20 @@ def get_student_detail_keyboard(user_id: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_transfer_recipients_keyboard(students: List[Dict[str, Any]], current_user_id: str) -> InlineKeyboardMarkup:
-    """Transfer recipients selection keyboard"""
+def get_transfer_recipients_keyboard(students: List[Dict[str, Any]], current_user_id: str, group_id: str = "", page: int = 0, page_size: int = 20) -> InlineKeyboardMarkup:
+    """Transfer recipients selection keyboard with pagination"""
     builder = InlineKeyboardBuilder()
     
-    for student in students:
-        if student.get('user_id') == current_user_id:
-            continue  # Skip self
-        
+    # Filter out self
+    filtered = [s for s in students if s.get('user_id') != current_user_id]
+    
+    total = len(filtered)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = page * page_size
+    end = start + page_size
+    page_students = filtered[start:end]
+    
+    for student in page_students:
         name = student.get('full_name', 'Unknown')
         points = student.get('points', 0)
         user_id = student.get('user_id', '')
@@ -260,24 +286,50 @@ def get_transfer_recipients_keyboard(students: List[Dict[str, Any]], current_use
             callback_data=f"transfer_to:{user_id}"
         )
     
-    builder.button(text=f"{config.EMOJIS['cancel']} Cancel", callback_data="student:menu")
+    # Pagination nav buttons
+    nav_buttons = 0
+    if page > 0:
+        builder.button(text="« Oldingi", callback_data=f"transfer_page:{group_id}:{page - 1}")
+        nav_buttons += 1
+    if end < total:
+        builder.button(text="Keyingi »", callback_data=f"transfer_page:{group_id}:{page + 1}")
+        nav_buttons += 1
     
-    builder.adjust(1)
+    builder.button(text=f"{config.EMOJIS['cancel']} Bekor qilish", callback_data="student:menu")
+    
+    # Row layout: each student on own row, nav buttons together, cancel alone
+    row_sizes = [1] * len(page_students)
+    if nav_buttons > 0:
+        row_sizes.append(nav_buttons)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
     
     return builder.as_markup()
 
 
-def get_ranking_keyboard(user_role: str = "student") -> InlineKeyboardMarkup:
-    """Ranking view keyboard"""
+def get_ranking_keyboard(user_role: str = "student", page: int = 0, total_pages: int = 1, group_id: str = "") -> InlineKeyboardMarkup:
+    """Ranking view keyboard with pagination"""
     builder = InlineKeyboardBuilder()
     
-    # Only Back button - user can press Rating again to refresh
+    # Pagination buttons
+    nav_buttons = 0
+    if page > 0:
+        builder.button(text="« Oldingi", callback_data=f"ranking_page:{user_role}:{group_id}:{page - 1}")
+        nav_buttons += 1
+    if page < total_pages - 1:
+        builder.button(text="Keyingi »", callback_data=f"ranking_page:{user_role}:{group_id}:{page + 1}")
+        nav_buttons += 1
+    
+    if nav_buttons > 0:
+        builder.adjust(nav_buttons)
+    
+    # Back button
     if user_role == "teacher":
         builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:menu")
     else:
         builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="student:menu")
     
-    builder.adjust(1)
+    builder.adjust(*([nav_buttons] if nav_buttons > 0 else []), 1)
     
     return builder.as_markup()
 

@@ -242,30 +242,15 @@ async def show_rating_all(message: Message, user: dict = None):
             await message.answer(f"📊 No students found in {group_name}.")
             return
         
-        # Format ranking
-        text = f"🏆 {group_name.upper()} RANKING\n\n"
+        page = 0
+        total_pages = max(1, (len(ranking) + PAGE_SIZE_RANKING - 1) // PAGE_SIZE_RANKING)
+        text = build_ranking_text_teacher(ranking, group_name, page, PAGE_SIZE_RANKING, highlight_user_id=user_id)
         
-        for i, student in enumerate(ranking, 1):
-            name = student.get('full_name', 'Unknown')
-            points = student.get('points', 0)
-            
-            # Highlight current user
-            if student.get('user_id') == user_id:
-                name = f"**{name}**"
-            
-            # Medals for top 3
-            if i == 1:
-                text += f"👑 {name} - {points} pts\n"
-            elif i == 2:
-                text += f"🥈 {name} - {points} pts\n"
-            elif i == 3:
-                text += f"🥉 {name} - {points} pts\n"
-            else:
-                text += f"{i}. {name} - {points} pts\n"
-        
-        text += f"\nTotal Students: {len(ranking)}"
-        
-        await message.answer(text, reply_markup=keyboards.get_ranking_keyboard("student"))
+        await message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=keyboards.get_ranking_keyboard("student", page, total_pages, group_id)
+        )
 
 
 @router.message(F.text.contains("Students"))
@@ -634,7 +619,7 @@ async def show_all_students(callback: CallbackQuery):
     await callback.message.edit_text(
         f"👤 ALL STUDENTS ({len(students)})\n"
         f"Select a student to manage:",
-        reply_markup=keyboards.get_students_list_keyboard(students)
+        reply_markup=keyboards.get_students_list_keyboard(students, page=0)
     )
     await callback.answer()
 
@@ -664,7 +649,7 @@ async def show_group_students(callback: CallbackQuery):
     await callback.message.edit_text(
         f"👤 {group['name'].upper()} STUDENTS ({len(students)})\n"
         f"Select a student to manage:",
-        reply_markup=keyboards.get_students_list_keyboard(students)
+        reply_markup=keyboards.get_students_list_keyboard(students, page=0)
     )
     await callback.answer()
 
@@ -677,9 +662,84 @@ async def back_to_students_list(callback: CallbackQuery):
     await callback.message.edit_text(
         f"👤 STUDENTS ({len(students)})\n"
         f"Select a student to manage:",
-        reply_markup=keyboards.get_students_list_keyboard(students)
+        reply_markup=keyboards.get_students_list_keyboard(students, page=0)
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("students_page:"))
+async def students_page_handler(callback: CallbackQuery):
+    """Handle students list pagination"""
+    page = int(callback.data.split(":")[1])
+    students = db.get_all_users(role='student', status='active')
+
+    if not students:
+        await callback.answer("👤 No students found!", show_alert=True)
+        return
+
+    total_pages = max(1, (len(students) + PAGE_SIZE_STUDENTS - 1) // PAGE_SIZE_STUDENTS)
+    page = max(0, min(page, total_pages - 1))
+
+    await callback.message.edit_text(
+        f"👤 ALL STUDENTS ({len(students)})\n"
+        f"Sahifa {page + 1}/{total_pages}\n"
+        f"Select a student to manage:",
+        reply_markup=keyboards.get_students_list_keyboard(students, page=page)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ranking_page:"))
+async def ranking_page_teacher(callback: CallbackQuery):
+    """Handle ranking pagination for teacher"""
+    # Format: ranking_page:{role}:{group_id}:{page}
+    parts = callback.data.split(":")
+    role = parts[1]
+    group_id = parts[2]
+    page = int(parts[3])
+
+    group = db.get_group(group_id)
+    group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+
+    ranking = db.get_ranking(group_id=group_id)
+    total_pages = max(1, (len(ranking) + PAGE_SIZE_RANKING - 1) // PAGE_SIZE_RANKING)
+    page = max(0, min(page, total_pages - 1))
+
+    text = build_ranking_text_teacher(ranking, group_name, page, PAGE_SIZE_RANKING)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=keyboards.get_ranking_keyboard(role, page, total_pages, group_id)
+    )
+    await callback.answer()
+
+
+PAGE_SIZE_RANKING = 20
+PAGE_SIZE_STUDENTS = 10
+
+
+def build_ranking_text_teacher(ranking: list, group_name: str, page: int, page_size: int, highlight_user_id: str = "") -> str:
+    """Build ranking text for teacher (and student fallback) view"""
+    total = len(ranking)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = page * page_size
+    end = start + page_size
+    page_ranking = ranking[start:end]
+
+    text = f"🏆 {group_name.upper()} RANKING\n"
+    if total_pages > 1:
+        text += f"Sahifa {page + 1}/{total_pages}\n"
+    text += "\n"
+
+    for i, student in enumerate(page_ranking, start + 1):
+        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        name = student['full_name']
+        if highlight_user_id and student.get('user_id') == highlight_user_id:
+            name = f"**{name}**"
+        text += f"{emoji} {name} - {student['points']} pts\n"
+
+    text += f"\nJami o'quvchilar: {total}"
+    return text
 
 
 @router.callback_query(F.data.startswith("rating:group:"))
@@ -703,17 +763,13 @@ async def show_group_rating(callback: CallbackQuery):
         )
         return
     
-    text = f"🏆 {group['name'].upper()} RANKING\n\n"
-    
-    for i, student in enumerate(ranking[:20], 1):
-        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        text += f"{emoji} {student['full_name']} - {student['points']} pts\n"
-    
-    text += f"\nTotal Students: {len(ranking)}"
+    page = 0
+    total_pages = max(1, (len(ranking) + PAGE_SIZE_RANKING - 1) // PAGE_SIZE_RANKING)
+    text = build_ranking_text_teacher(ranking, group['name'], page, PAGE_SIZE_RANKING)
     
     await callback.message.edit_text(
         text,
-        reply_markup=keyboards.get_ranking_keyboard("teacher")
+        reply_markup=keyboards.get_ranking_keyboard("teacher", page, total_pages, group_id)
     )
     await callback.answer()
 
@@ -1109,10 +1165,9 @@ async def handle_sync_control(callback: CallbackQuery):
                     callback,
                     f"✅ UPDATE COMPLETE\n\n"
                     f"📊 Groups refreshed: {len(groups)}\n"
-                    f"👤 Student names updated: {stats.get('updated', 0)}\n"
+                    f"👤 Names updated: {stats.get('updated', 0)}\n"
+                    f"⏭ Skipped (no change): {stats.get('skipped', 0)}\n"
                     f"❌ Errors: {stats.get('errors', 0)}\n\n"
-                    f"✅ Groups cache refreshed from Google Sheets\n"
-                    f"✅ All student names, phones, and usernames updated\n"
                     f"💰 Points were NOT changed",
                     reply_markup=keyboards.get_back_keyboard("sync:control")
                 )

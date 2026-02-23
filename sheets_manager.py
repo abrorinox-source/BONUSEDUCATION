@@ -837,30 +837,59 @@ class GoogleSheetsManager:
     
     async def sync_names_only(self) -> Dict[str, int]:
         """
-        Sync ONLY names/phones from Sheets to Firebase
+        Sync ONLY names/phones from Sheets to Firebase (all groups/tabs)
         Points are not touched
         """
         async with self.sync_lock:
             stats = {'updated': 0, 'errors': 0}
             
             try:
-                sheets_data = self.fetch_all_data()
+                # Get all groups (sheet tabs)
+                groups = db.get_all_groups(status='active')
                 
-                for row in sheets_data:
-                    user_id = row['user_id']
-                    user = db.get_user(user_id)
+                if not groups:
+                    # Fallback: single Sheet1
+                    sheet_tabs = [{'sheet_name': 'Sheet1', 'name': 'Sheet1'}]
+                else:
+                    sheet_tabs = groups
+                
+                for group in sheet_tabs:
+                    sheet_name = group.get('sheet_name', 'Sheet1')
+                    print(f"📝 Syncing names from sheet: {sheet_name}")
                     
-                    if user:
-                        # Update ONLY names/phones, NOT points
-                        db.update_user(user_id, {
-                            'full_name': row['full_name'],
-                            'phone': row.get('phone', ''),
-                            'username': row.get('username', '')
-                        })
-                        stats['updated'] += 1
-                        print(f"👤 Updated name: {row['full_name']}")
+                    try:
+                        sheets_data = self.fetch_all_data(sheet_name=sheet_name)
+                        
+                        for row in sheets_data:
+                            user_id = row['user_id']
+                            user = db.get_user(user_id)
+                            
+                            if user:
+                                new_name = row['full_name']
+                                new_phone = row.get('phone', '')
+                                new_username = row.get('username', '')
+                                
+                                # Only update if something actually changed
+                                if (user.get('full_name') != new_name or
+                                    user.get('phone', '') != new_phone or
+                                    user.get('username', '') != new_username):
+                                    
+                                    db.update_user(user_id, {
+                                        'full_name': new_name,
+                                        'phone': new_phone,
+                                        'username': new_username
+                                    })
+                                    stats['updated'] += 1
+                                    print(f"👤 Updated: {user.get('full_name')} → {new_name} (sheet: {sheet_name})")
+                                else:
+                                    stats.setdefault('skipped', 0)
+                                    stats['skipped'] += 1
+                    
+                    except Exception as e:
+                        print(f"❌ Names sync error for sheet '{sheet_name}': {e}")
+                        stats['errors'] += 1
                 
-                print(f"✅ Names sync: {stats['updated']} updated")
+                print(f"✅ Names sync complete: {stats['updated']} updated across {len(sheet_tabs)} sheet(s)")
                 return stats
             
             except Exception as e:

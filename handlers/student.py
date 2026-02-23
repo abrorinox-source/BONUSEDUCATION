@@ -69,6 +69,34 @@ async def start_transfer(message: Message, user: dict = None):
     )
 
 
+PAGE_SIZE_RANKING = 20
+
+
+def build_ranking_text(ranking: list, user_id: str, group_name: str, page: int, page_size: int) -> str:
+    """Build ranking text for a given page"""
+    total = len(ranking)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    start = page * page_size
+    end = start + page_size
+    page_ranking = ranking[start:end]
+
+    text = f"🏆 {group_name.upper()} RANKING\n"
+    if total_pages > 1:
+        text += f"Sahifa {page + 1}/{total_pages}\n"
+    text += "\n"
+
+    for i, student in enumerate(page_ranking, start + 1):
+        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        if student['user_id'] == user_id:
+            name = f"**{student['full_name']}**"
+        else:
+            name = student['full_name']
+        text += f"{emoji} {name} - {student['points']} pts\n"
+
+    text += f"\nJami o'quvchilar: {total}"
+    return text
+
+
 @router.message(F.text.contains("Rating"))
 async def show_rating_student(message: Message, user: dict = None):
     """Show ranking for student's own group"""
@@ -95,22 +123,15 @@ async def show_rating_student(message: Message, user: dict = None):
         await message.answer(f"📊 No students found in {group_name}.")
         return
     
-    text = f"🏆 {group_name.upper()} RANKING\n\n"
+    page = 0
+    total_pages = max(1, (len(ranking) + PAGE_SIZE_RANKING - 1) // PAGE_SIZE_RANKING)
+    text = build_ranking_text(ranking, user_id, group_name, page, PAGE_SIZE_RANKING)
     
-    for i, student in enumerate(ranking[:20], 1):
-        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        
-        # Bold current user's name
-        if student['user_id'] == user_id:
-            name = f"**{student['full_name']}**"
-        else:
-            name = student['full_name']
-        
-        text += f"{emoji} {name} - {student['points']} pts\n"
-    
-    text += f"\nTotal Students: {len(ranking)}"
-    
-    await message.answer(text, parse_mode="Markdown", reply_markup=keyboards.get_ranking_keyboard("student"))
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=keyboards.get_ranking_keyboard("student", page, total_pages, group_id)
+    )
 
 
 @router.message(F.text.contains("History"))
@@ -215,7 +236,32 @@ async def select_transfer_group(callback: CallbackQuery):
         f"💸 TRANSFER POINTS\n\n"
         f"Group: {group_name}\n"
         f"Select recipient:",
-        reply_markup=keyboards.get_transfer_recipients_keyboard(students, user_id)
+        reply_markup=keyboards.get_transfer_recipients_keyboard(students, user_id, group_id=group_id)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("transfer_page:"))
+async def transfer_page_handler(callback: CallbackQuery):
+    """Handle transfer recipients pagination — Format: transfer_page:{group_id}:{page}"""
+    parts = callback.data.split(":")
+    group_id = parts[1]
+    page = int(parts[2])
+    user_id = str(callback.from_user.id)
+
+    students = db.get_all_users(role='student', status='active', group_id=group_id)
+    students = [s for s in students if s['user_id'] != user_id]
+
+    group = db.get_group(group_id)
+    group_name = group.get('name', group_id) if group else group_id
+
+    if not students:
+        await callback.answer("❌ No students found", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"💸 TRANSFER POINTS\n\nGroup: {group_name}\nSelect recipient:",
+        reply_markup=keyboards.get_transfer_recipients_keyboard(students, user_id, group_id=group_id, page=page)
     )
     await callback.answer()
 
@@ -383,23 +429,42 @@ async def refresh_ranking(callback: CallbackQuery, user: dict):
     # Get ranking for student's group only
     ranking = db.get_ranking(group_id=group_id)
     
-    text = f"🏆 {group_name.upper()} RANKING\n\n"
-    
-    for i, student in enumerate(ranking[:20], 1):
-        emoji = "👑" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        
-        if student['user_id'] == user_id:
-            name = f"**{student['full_name']}**"
-        else:
-            name = student['full_name']
-        
-        text += f"{emoji} {name} - {student['points']} pts\n"
-    
-    text += f"\nTotal Students: {len(ranking)}"
+    page = 0
+    total_pages = max(1, (len(ranking) + PAGE_SIZE_RANKING - 1) // PAGE_SIZE_RANKING)
+    text = build_ranking_text(ranking, user_id, group_name, page, PAGE_SIZE_RANKING)
     
     await callback.message.edit_text(
         text,
         parse_mode="Markdown",
-        reply_markup=keyboards.get_ranking_keyboard(user.get('role', 'student'))
+        reply_markup=keyboards.get_ranking_keyboard(user.get('role', 'student'), page, total_pages, group_id)
     )
-    await callback.answer("✅ Ranking refreshed!")
+    await callback.answer("✅ Ranking yangilandi!")
+
+
+@router.callback_query(F.data.startswith("ranking_page:"))
+async def ranking_page(callback: CallbackQuery, user: dict):
+    """Handle ranking pagination for students"""
+    # Format: ranking_page:{role}:{group_id}:{page}
+    parts = callback.data.split(":")
+    role = parts[1]
+    group_id = parts[2]
+    page = int(parts[3])
+    user_id = str(callback.from_user.id)
+
+    group = db.get_group(group_id)
+    group_name = group.get('name', 'Unknown Group') if group else 'Unknown Group'
+
+    ranking = db.get_ranking(group_id=group_id)
+    total_pages = max(1, (len(ranking) + PAGE_SIZE_RANKING - 1) // PAGE_SIZE_RANKING)
+
+    # Clamp page
+    page = max(0, min(page, total_pages - 1))
+
+    text = build_ranking_text(ranking, user_id, group_name, page, PAGE_SIZE_RANKING)
+
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=keyboards.get_ranking_keyboard(role, page, total_pages, group_id)
+    )
+    await callback.answer()
