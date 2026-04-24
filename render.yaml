@@ -1,23 +1,32 @@
 services:
   - type: web
-    name: telegram-bot
-    env: python
-    region: oregon
+    name: score-bot
+    runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python bot.py
+    autoDeployTrigger: commit
+    healthCheckPath: /health
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
+      - key: USE_WEBHOOK
+        value: "true"
+      - key: WEBHOOK_PATH
+        value: /webhook
       - key: BOT_TOKEN
-        sync: false
-      - key: TEACHER_CODE
         sync: false
       - key: FIREBASE_CREDENTIALS
         sync: false
       - key: SHEET_ID
         sync: false
-      - key: USE_WEBHOOK
-        value: True
-      # Note: WEBHOOK_HOST not needed - auto-detected from RENDER_EXTERNAL_URL
-      # Note: PORT is automatically set by Render to 10000
+      - key: TEACHER_CODE
+        sync: false
+
+  - type: cron
+    name: score-bot-keepalive
+    runtime: python
+    schedule: "*/10 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import os, urllib.request; urllib.request.urlopen(os.environ['HEALTHCHECK_URL'], timeout=10).read()"
+    envVars:
+      - key: HEALTHCHECK_URL
+        sync: false

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Registration handlers
 Handles user registration flow
 """
@@ -7,14 +7,25 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from database import db
-from sheets_manager import sheets_manager
-import keyboards
-import states
-import config
-from google.cloud.firestore import SERVER_TIMESTAMP
-
+from app.database import db
+from app.sheets_manager import sheets_manager
+from app import keyboards
+from app import states
+from app import config
 router = Router()
+
+
+async def prompt_group_selection(message: Message, intro_text: str = "Please select your group:"):
+    """Send group selection keyboard to a user."""
+    groups = db.get_teacher_groups()
+    if not groups:
+        await message.answer("❌ No groups are available yet. Please contact the teacher.")
+        return
+
+    await message.answer(
+        f"📚 {intro_text}",
+        reply_markup=keyboards.get_group_selection_keyboard(groups)
+    )
 
 
 @router.message(CommandStart())
@@ -66,6 +77,11 @@ async def cmd_start(message: Message, state: FSMContext):
             await show_teacher_menu(message, user)
         elif user.get('status') == 'pending':
             await message.answer(config.MESSAGES['registration_pending'])
+        elif user.get('status') == 'pending_group' or (user.get('role') == 'student' and not user.get('group_id')):
+            await prompt_group_selection(
+                message,
+                "Your registration is approved. Please select your group:"
+            )
         elif user.get('status') == 'active':
             await show_student_menu(message, user)
     else:
@@ -132,24 +148,18 @@ async def process_teacher_code(message: Message, state: FSMContext):
         
         # Check if default group exists (Sheet1)
         # All groups are shared, so no need for special 'global' marker
-        all_groups = db.groups_ref.where('sheet_name', '==', 'Sheet1').limit(1).stream()
-        default_exists = False
-        for _ in all_groups:
-            default_exists = True
-            break
-        
-        if not default_exists:
-            # Create default group (shared by ALL teachers)
-            from google.cloud.firestore import SERVER_TIMESTAMP
-            default_group = {
-                'name': 'Main Group',
-                'sheet_name': 'Sheet1',
-                'teacher_id': user_id,  # Creator ID (but all teachers can manage)
-                'status': 'active',
-                'created_at': SERVER_TIMESTAMP
-            }
-            db.create_group(default_group)
-            print(f"✅ Created default group 'Main Group' (Sheet1)")
+        # Ensure the default teacher sheet exists.
+        try:
+            if not db.get_group('Sheet1'):
+                created_group = db.create_group({
+                    'name': 'Sheet1',
+                    'sheet_name': 'Sheet1',
+                    'teacher_id': user_id
+                })
+                if created_group:
+                    print("Created default sheet tab Sheet1")
+        except Exception as e:
+            print(f"Error ensuring default Sheet1 tab: {e}")
         
         await message.answer(
             "✅ Welcome, Teacher!",
@@ -178,47 +188,54 @@ async def process_contact(message: Message, state: FSMContext):
     )
     
     # Check if there are any groups from Google Sheets
-    # ⭐ Use teacher's groups from Google Sheets (not Firebase groups collection)
-    teacher_id = '8017101114'  # Hardcoded for now, TODO: make dynamic
-    groups = db.get_teacher_groups(teacher_id)
-    
-    if groups and len(groups) > 0:
-        # Show group selection
-        await message.answer(
-            "📚 SELECT YOUR CLASS/GROUP\n\n"
-            "Please select which group you belong to:",
-            reply_markup=keyboards.get_group_selection_keyboard(groups)
-        )
-        await state.set_state(states.RegistrationStates.waiting_for_group)
-    else:
-        # No groups - complete registration without group
-        print("⚠️ No groups found for registration")
-        await complete_registration(message, state, group_id=None)
+    # Register as pending first; group is selected after teacher approval.
+    await complete_registration(message, state, group_id=None)
 
 
 @router.callback_query(F.data.startswith("select_group:"))
 async def process_group_selection(callback: CallbackQuery, state: FSMContext):
     """Process group selection"""
-    firebase_group_id = callback.data.split(":")[1]
+    group_id = callback.data.split(":")[1]
+    user_id = str(callback.from_user.id)
     
     # Verify group exists
-    group = db.get_group(firebase_group_id)
+    group = db.get_group(group_id)
     if not group:
         await callback.answer("❌ Group not found!", show_alert=True)
         return
     
-    # ⭐ CRITICAL: Use sheet_name as group_id for students
-    # This ensures students are added to the correct Google Sheets tab
-    sheet_name = group.get('sheet_name', firebase_group_id)
-    
-    print(f"📝 Registration group selection:")
-    print(f"   Firebase group_id: {firebase_group_id}")
+    user = db.get_user(user_id)
+    if not user:
+        await callback.answer("❌ User not found!", show_alert=True)
+        return
+
+    sheet_name = group.get('sheet_name', group_id)
+
+    print("📝 Group selection after approval:")
     print(f"   Group name: {group.get('name')}")
     print(f"   Sheet name: {sheet_name}")
-    print(f"   Saving to student as group_id: {sheet_name}")
-    
-    # Complete registration with sheet_name as group_id
-    await complete_registration(callback.message, state, group_id=sheet_name, group_name=group['name'])
+
+    active_student = {
+        'user_id': user_id,
+        'full_name': user.get('full_name', ''),
+        'phone': user.get('phone', ''),
+        'username': user.get('username', ''),
+        'role': 'student',
+        'status': 'active',
+        'points': user.get('points', 0),
+        'group_id': sheet_name
+    }
+
+    created = db.create_user(user_id, active_student)
+    if not created:
+        await callback.answer("❌ Failed to save your group selection. Please try again.", show_alert=True)
+        return
+
+    db.delete_user(user_id)
+
+    await callback.message.edit_text(f"✅ Selected: {group['name']}")
+    await show_student_menu(callback.message, active_student)
+    await state.clear()
     await callback.answer(f"✅ Selected: {group['name']}")
 
 
@@ -239,21 +256,18 @@ async def complete_registration(message: Message, state: FSMContext, group_id: s
         'status': 'pending',
         'points': 0
     }
-    
-    # Add group_id if provided
+
     if group_id:
         student_data['group_id'] = group_id
-        print(f"📝 Complete registration - Setting group_id: {group_id}")
-    
-    print(f"📝 Creating user {user_id} with data: {student_data}")
+
+    print(f"📝 Creating pending user {user_id} with data: {student_data}")
     db.create_user(user_id, student_data)
     
     # Notify student
-    group_text = f"\nGroup: {group_name}" if group_name else ""
     await message.answer(
-        f"✅ Registration submitted!{group_text}\n"
-        "Wait for teacher approval.",
-        reply_markup=keyboards.get_student_keyboard()
+        "✅ Registration submitted!\n"
+        "Wait for teacher approval.\n\n"
+        "After approval, you will be asked to choose your group."
     )
     
     # Notify teacher
@@ -340,41 +354,33 @@ async def approve_student(callback: CallbackQuery):
         await callback.answer("❌ User not found!", show_alert=True)
         return
     
-    # Update status to active
-    db.update_user(user_id, {'status': 'active'})
-    
-    # ⭐ CRITICAL FIX: Add to Google Sheets IMMEDIATELY
-    # This prevents cleanup from deleting the user before background sync runs
-    try:
-        from sheets_manager import sheets_manager
-        group_id = user.get('group_id')
-        if group_id:
-            # Add user to their group's sheet
-            user_data = {
-                'user_id': user_id,
-                'full_name': user.get('full_name', ''),
-                'phone': user.get('phone', ''),
-                'username': user.get('username', ''),
-                'points': 0
-            }
-            sheets_manager.add_user(user_data, sheet_name=group_id)
-            print(f"✅ Added approved student to Sheets: {user['full_name']} → {group_id}")
-    except Exception as e:
-        print(f"⚠️ Error adding student to Sheets (will sync later): {e}")
-    
-    # Notify student
-    try:
+    # Mark as approved, but keep waiting for group selection.
+    db.update_user(user_id, {'status': 'pending_group'})
+
+    groups = db.get_teacher_groups()
+    if groups:
         await callback.bot.send_message(
             chat_id=user_id,
-            text=config.MESSAGES['registration_approved'],
-            reply_markup=keyboards.get_student_keyboard()
+            text=(
+                "✅ Your registration has been approved.\n"
+                "Now choose your group:"
+            ),
+            reply_markup=keyboards.get_group_selection_keyboard(groups)
         )
-    except Exception as e:
-        print(f"Error notifying student: {e}")
+    else:
+        await callback.bot.send_message(
+            chat_id=user_id,
+            text=(
+                "✅ Your registration has been approved.\n"
+                "No groups are available yet. Please contact the teacher."
+            )
+        )
     
+    # Notify student
     # Update teacher's message
     await callback.message.edit_text(
-        f"✅ Approved: {user['full_name']}"
+        f"✅ Approved: {user['full_name']}\n"
+        f"Awaiting group selection."
     )
     await callback.answer("✅ Student approved!")
 
@@ -386,8 +392,8 @@ async def reject_student(callback: CallbackQuery):
     
     user = db.get_user(user_id)
     
-    # Delete from database
-    db.users_ref.document(user_id).delete()
+    # Delete from Sheets
+    db.delete_user(user_id)
     
     # Notify student
     try:
@@ -415,14 +421,8 @@ async def approve_restore(callback: CallbackQuery):
         await callback.answer("❌ User not found!", show_alert=True)
         return
     
-    # Restore account to active status
-    db.update_user(user_id, {
-        'status': 'active',
-        'restored_at': SERVER_TIMESTAMP,
-        'restored_by': str(callback.from_user.id)
-    })
-    
-    # Note: User will be restored to Sheets by background sync
+    # Restore account to active status in Sheets
+    db.update_user(user_id, {'status': 'active'})
     
     # Notify student
     try:
@@ -459,12 +459,8 @@ async def reject_restore(callback: CallbackQuery):
         await callback.answer("❌ User not found!", show_alert=True)
         return
     
-    # Mark as permanently banned
-    db.update_user(user_id, {
-        'status': 'banned',
-        'banned_at': SERVER_TIMESTAMP,
-        'banned_by': str(callback.from_user.id)
-    })
+    # Mark as permanently banned in Sheets
+    db.update_user(user_id, {'status': 'banned'})
     
     # Notify student
     try:
@@ -495,6 +491,7 @@ async def show_teacher_menu(message: Message, user: dict):
     # Get statistics
     active_students = len(db.get_all_users(role='student', status='active'))
     pending_approvals = len(db.get_pending_approvals())
+    commission_pool = db.get_commission_pool()
     
     all_students = db.get_all_users(role='student', status='active')
     total_points = sum(s.get('points', 0) for s in all_students)
@@ -505,6 +502,7 @@ async def show_teacher_menu(message: Message, user: dict):
         pending_approvals=pending_approvals,
         total_points=total_points
     )
+    text += f"\nCommission Pool: {commission_pool} pts"
     
     await message.answer(text, reply_markup=keyboards.get_teacher_keyboard(pending_count=pending_approvals))
 
@@ -513,7 +511,8 @@ async def show_student_menu(message: Message, user: dict):
     """Show student menu with stats"""
     # Get ranking position
     ranking = db.get_ranking()
-    rank = next((i + 1 for i, u in enumerate(ranking) if u['user_id'] == user['user_id']), 0)
+    user_id = user.get('user_id')
+    rank = next((i + 1 for i, u in enumerate(ranking) if u.get('user_id') == user_id), 0) if user_id else 0
     
     text = config.MESSAGES['welcome_student'].format(
         name=user['full_name'],

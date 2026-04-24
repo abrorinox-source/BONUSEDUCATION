@@ -26,7 +26,7 @@ TEACHER_CODE = os.getenv('TEACHER_CODE', '')
 DEFAULT_COMMISSION_RATE = 0.10
 
 # Sync settings
-DEFAULT_SYNC_INTERVAL = 10  # 10 seconds - for real-time sync
+DEFAULT_SYNC_INTERVAL = 30  # 30 seconds - balanced cache refresh
 MIN_SYNC_INTERVAL = 5  # 5 seconds minimum
 MAX_SYNC_INTERVAL = 3600  # 1 hour maximum
 
@@ -76,7 +76,9 @@ COLLECTIONS = {
     'USERS': 'users',
     'SETTINGS': 'settings',
     'TRANSACTION_LOGS': 'transaction_logs',
-    'GROUPS': 'groups'
+    'GROUPS': 'groups',
+    'TRANSFER_LIMIT_USAGE': 'transfer_limit_usage',
+    'TRANSFER_LIMIT_OVERRIDES': 'transfer_limit_overrides'
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -84,71 +86,78 @@ COLLECTIONS = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 MESSAGES = {
-    'welcome_teacher': """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👨‍🏫 TEACHER PANEL
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Welcome back, {name}!
+    'welcome_teacher': """????? <b>Teacher Panel</b>
 
-Active Students: {active_students}
-Pending Approvals: {pending_approvals}
-Total Points Distributed: {total_points:,}
+Welcome back, <b>{name}</b>.
 
-Use the buttons below to manage.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━""",
+<b>Active Students:</b> {active_students}
+<b>Pending Approvals:</b> {pending_approvals}
+<b>Total Points Distributed:</b> {total_points:,}
 
-    'welcome_student': """━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-👋 Welcome back, {name}!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Your Points: {points}
-Your Rank: #{rank}
+<i>Use the buttons below to manage groups, students, and settings.</i>""",
 
-Use buttons to check ranking,
-transfer points, or view rules.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━""",
+    'welcome_student': """<b>Welcome back, {name}!</b>
 
-    'registration_pending': """⏳ Your registration is pending teacher approval.
-Please wait for confirmation.""",
+<b>Your Points:</b> {points}
+<b>Your Rank:</b> #{rank}
 
-    'registration_approved': """🎉 Your registration has been approved!
+<i>Use the buttons below to view ranking, transfer points, or read the rules.</i>""",
+
+    'registration_pending': """<b>Registration Pending</b>
+
+Your account is waiting for teacher approval.
+<i>After approval, you will choose your group.</i>""",
+
+    'registration_approved': """<b>Registration Approved</b>
+
 You can now use the bot.
+<i>Use the menu below to get started.</i>""",
 
-Use the buttons below to get started.""",
+    'registration_rejected': """<b>Registration Rejected</b>
 
-    'registration_rejected': """❌ Your registration was rejected.
 Contact support if you think this is a mistake.""",
 
-    'user_deleted': """⚠️ You have been removed from the system.
-Send /start to register again.""",
+    'user_deleted': """<b>Account Removed</b>
 
-    'account_restored': """✅ Your account has been restored!
+You have been removed from the system.
+Send <code>/start</code> to register again.""",
+
+    'account_restored': """<b>Account Restored</b>
+
 You can continue using the bot.""",
 
-    'maintenance_mode': """⚠️ Bot is under maintenance.
+    'maintenance_mode': """<b>Maintenance Mode</b>
+
+The bot is temporarily unavailable.
 Please try again later.""",
 
-    'insufficient_balance': """❌ Insufficient balance!
-Required: {required} pts
-Available: {available} pts""",
+    'insufficient_balance': """<b>Insufficient Balance</b>
 
-    'transfer_confirmation': """⚠️ TRANSFER CONFIRMATION
-━━━━━━━━━━━━━━━━━━━━━━
-To: {recipient_name}
-Amount: {amount} pts
-Commission ({commission_rate}%): {commission} pts
-──────────────────
-Total Cost: {total} pts
-Your Balance: {current_balance} pts
-After Transfer: {after_balance} pts
+Required: <b>{required}</b> pts
+Available: <b>{available}</b> pts""",
 
-Confirm transfer?""",
+    'transfer_confirmation': """<b>Transfer Confirmation</b>
 
-    'transfer_success_sender': """✅ Transfer successful!
-Sent {amount} pts to {recipient_name}.
-Commission: {commission} pts
-New balance: {new_balance} pts""",
+<b>To:</b> {recipient_name}
+<b>Amount:</b> {amount} pts
+<b>Commission ({commission_rate}%):</b> {commission} pts
 
-    'transfer_success_recipient': """💰 You received {amount} pts from {sender_name}!
-New balance: {new_balance} pts""",
+<b>Total Cost:</b> {total} pts
+<b>Your Balance:</b> {current_balance} pts
+<b>After Transfer:</b> {after_balance} pts
+
+<i>Please confirm this transfer.</i>""",
+
+    'transfer_success_sender': """<b>Transfer Successful</b>
+
+Sent <b>{amount}</b> pts to <b>{recipient_name}</b>
+Commission: <b>{commission}</b> pts
+New Balance: <b>{new_balance}</b> pts""",
+
+    'transfer_success_recipient': """<b>You Received Points</b>
+
+<b>{amount}</b> pts arrived from <b>{sender_name}</b>.
+New Balance: <b>{new_balance}</b> pts""",
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

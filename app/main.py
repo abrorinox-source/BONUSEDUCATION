@@ -13,20 +13,18 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from aiohttp import web
 
 # Import configuration
-import config
+from app import config
 
 # Import database and sheets manager
-from database import db
-from sheets_manager import sheets_manager
+from app.database import db
+from app.sheets_manager import sheets_manager
 
 # Import middleware
-from middleware import SecurityMiddleware, FSMCancelMiddleware
+from app.middleware import SecurityMiddleware, FSMCancelMiddleware
 
 # Import handlers
-from handlers import registration, teacher, student
+from app.handlers import registration, teacher, student
 
-# Import for sync
-from sheets_manager import sheets_manager
 
 
 async def on_startup(bot: Bot):
@@ -48,6 +46,7 @@ async def on_startup(bot: Bot):
 async def on_shutdown(bot: Bot):
     """Actions on bot shutdown"""
     print("🛑 Bot shutting down...")
+    sheets_manager.stop_background_sync()
     print("✅ Bot shutdown complete")
 
 
@@ -67,6 +66,18 @@ async def on_shutdown_webhook(bot: Bot):
     await on_shutdown(bot)
     await bot.delete_webhook()
     print("✅ Webhook removed")
+
+
+async def health_handler(request: web.Request) -> web.Response:
+    """Health endpoint for Render health checks and keepalive pings."""
+    return web.json_response(
+        {
+            "status": "ok",
+            "service": "score-bot",
+            "mode": "webhook" if config.USE_WEBHOOK else "polling",
+            "sync_running": sheets_manager.is_sync_running(),
+        }
+    )
 
 
 async def main():
@@ -113,6 +124,7 @@ async def main():
             
             # Create aiohttp application
             app = web.Application()
+            app.router.add_get("/health", health_handler)
             
             # Setup webhook handler
             webhook_handler = SimpleRequestHandler(
@@ -141,6 +153,7 @@ async def main():
             
         else:
             # POLLING MODE - For local development
+            await bot.delete_webhook(drop_pending_updates=True)
             dp.startup.register(on_startup)
             dp.shutdown.register(on_shutdown)
             

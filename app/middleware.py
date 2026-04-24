@@ -5,8 +5,8 @@ Middleware for security and access control
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 from typing import Callable, Dict, Any, Awaitable, Union
-from database import db
-import config
+from app.database import db
+from app import config
 
 
 class SecurityMiddleware(BaseMiddleware):

@@ -3,7 +3,7 @@ Manual Ranking - Sort Sheet by POINTS
 Run this whenever you want to sort the sheet
 """
 
-from sheets_manager import sheets_manager
+from app.sheets_manager import sheets_manager
 
 def sort_by_points():
     service = sheets_manager.service

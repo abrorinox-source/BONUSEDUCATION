@@ -34,6 +34,7 @@ class TransferStates(StatesGroup):
 class SettingsStates(StatesGroup):
     """States for settings modification"""
     waiting_for_commission = State()
+    waiting_for_transfer_limit = State()
     waiting_for_rules = State()
     waiting_for_broadcast = State()
 

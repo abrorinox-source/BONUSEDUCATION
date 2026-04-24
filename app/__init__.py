@@ -1,0 +1,3 @@
+"""
+BonusEducation app package.
+"""

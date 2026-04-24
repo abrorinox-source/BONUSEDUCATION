@@ -6,8 +6,8 @@ Reply and Inline keyboards
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from typing import List, Dict, Any
-import config
-from database import db
+from app import config
+from app.database import db
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -19,17 +19,15 @@ def get_teacher_keyboard(pending_count: int = 0) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     
     builder.button(text="🔄 Refresh Groups")
-    builder.button(text=f"{config.EMOJIS['force_sync']} Force Sync")
     builder.button(text=f"{config.EMOJIS['rating']} Rating")
     builder.button(text=f"{config.EMOJIS['students']} Students")
-    builder.button(text="♻️ Recycle Bin")
     builder.button(text=f"{config.EMOJIS['settings']} Settings")
     
     # Pending button — only shown if there are pending approvals
     pending_text = f"⏳ Pending ({pending_count})" if pending_count > 0 else "⏳ Pending"
     builder.button(text=pending_text)
     
-    builder.adjust(2, 2, 2, 1)
+    builder.adjust(2, 2, 1)
     
     return builder.as_markup(resize_keyboard=True)
 
@@ -163,20 +161,18 @@ def get_confirmation_keyboard(action: str, data: str = "") -> InlineKeyboardMark
 def get_settings_keyboard() -> InlineKeyboardMarkup:
     """Settings menu keyboard"""
     builder = InlineKeyboardBuilder()
-    
-    # ❌ Removed: Manage Groups (everything done via Google Sheets now)
-    # builder.button(text="👥 Manage Groups", callback_data="settings:groups")
-    builder.button(text="💰 Transfer Commission", callback_data="settings:commission")
-    builder.button(text="🔓 Bot Status", callback_data="settings:bot_status")
-    builder.button(text="🔄 Sync Control", callback_data="settings:sync_control")
-    builder.button(text="📜 Transaction History", callback_data="settings:transaction_history")
-    # ❌ Removed: builder.button(text="📥 Export Data", callback_data="settings:export")
-    builder.button(text="📝 Edit Rules", callback_data="settings:edit_rules")
-    builder.button(text="📢 Global Broadcast", callback_data="settings:broadcast")
+
+    builder.button(text="Transfer Commission", callback_data="settings:commission")
+    builder.button(text="Transfer Limits", callback_data="settings:transfer_limits")
+    builder.button(text="Bot Status", callback_data="settings:bot_status")
+    builder.button(text="Sync Settings", callback_data="settings:sync_control")
+    builder.button(text="Transaction History", callback_data="settings:transaction_history")
+    builder.button(text="Edit Rules", callback_data="settings:edit_rules")
+    builder.button(text="Global Broadcast", callback_data="settings:broadcast")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
-    
-    builder.adjust(2, 2, 1, 1, 1)  # Adjusted after removing Manage Groups
-    
+
+    builder.adjust(2, 2, 2, 1, 1)
+
     return builder.as_markup()
 
 
@@ -196,25 +192,17 @@ def get_export_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_sync_control_keyboard(sync_enabled: bool) -> InlineKeyboardMarkup:
-    """Sync control keyboard"""
+    """Sync/cache control keyboard"""
     builder = InlineKeyboardBuilder()
-    
-    # Single toggle button (Pause/Resume)
-    toggle_text = "⏸️ Disable Sync" if sync_enabled else "▶️ Enable Sync"
+
+    toggle_text = "Disable Auto Sync" if sync_enabled else "Enable Auto Sync"
     builder.button(text=toggle_text, callback_data="sync:toggle")
-    
-    builder.button(text="⏱️ Change Interval", callback_data="sync:interval")
-    
-    # Update button
-    builder.button(text="📝 Update Names", callback_data="sync:update_names")
-    # ❌ Removed: builder.button(text="💰 Sync Points Only", callback_data="sync:points_only")
-    
-    # ❌ Removed: builder.button(text="📥 Force: Sheets → Firebase", callback_data="sync:force_sheets")
-    
+    builder.button(text="Change Interval", callback_data="sync:interval")
+    builder.button(text="Refresh Now", callback_data="sync:refresh")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
-    
+
     builder.adjust(1, 1, 1, 1)
-    
+
     return builder.as_markup()
 
 
@@ -238,18 +226,17 @@ def get_sync_interval_keyboard() -> InlineKeyboardMarkup:
 def get_transaction_history_keyboard() -> InlineKeyboardMarkup:
     """Transaction history filter keyboard"""
     builder = InlineKeyboardBuilder()
-    
-    builder.button(text="📤 All Transactions", callback_data="logs:all")
-    builder.button(text="💸 Transfers", callback_data="logs:transfer")
-    builder.button(text="➕ Added Points", callback_data="logs:add_points")
-    builder.button(text="➖ Subtracted Points", callback_data="logs:subtract_points")
-    builder.button(text="✏️ Manual Edits", callback_data="logs:manual_edit")
-    builder.button(text="📊 Export Logs", callback_data="logs:export_menu")
-    builder.button(text="🗑️ Clear All Logs", callback_data="logs:clear")
+
+    builder.button(text="All Transactions", callback_data="logs:all")
+    builder.button(text="Transfers", callback_data="logs:transfer")
+    builder.button(text="Added Points", callback_data="logs:add_points")
+    builder.button(text="Subtracted Points", callback_data="logs:subtract_points")
+    builder.button(text="Export Logs", callback_data="logs:export_menu")
+    builder.button(text="Clear All Logs", callback_data="logs:clear")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
-    
-    builder.adjust(2, 2, 2, 1, 1)
-    
+
+    builder.adjust(2, 2, 1, 1, 1)
+
     return builder.as_markup()
 
 
@@ -266,12 +253,11 @@ def get_logs_export_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "detail", page: int = 0, page_size: int = 10) -> InlineKeyboardMarkup:
+def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "detail", page: int = 0, page_size: int = 10, scope: str = "all") -> InlineKeyboardMarkup:
     """Students list keyboard with pagination"""
     builder = InlineKeyboardBuilder()
     
     total = len(students)
-    total_pages = max(1, (total + page_size - 1) // page_size)
     start = page * page_size
     end = start + page_size
     page_students = students[start:end]
@@ -283,19 +269,20 @@ def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "de
         
         builder.button(
             text=f"👤 {name} ({points} pts)",
-            callback_data=f"student_{action}:{user_id}"
+            callback_data=f"student_{action}:{user_id}:{scope}"
         )
     
     # Pagination row
     nav_buttons = 0
     if page > 0:
-        builder.button(text="« Oldingi", callback_data=f"students_page:{page - 1}")
+        builder.button(text="« Oldingi", callback_data=f"students_page:{scope}:{page - 1}")
         nav_buttons += 1
     if end < total:
-        builder.button(text="Keyingi »", callback_data=f"students_page:{page + 1}")
+        builder.button(text="Keyingi »", callback_data=f"students_page:{scope}:{page + 1}")
         nav_buttons += 1
     
-    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:menu")
+    back_target = "teacher:menu" if scope == "all" else f"students:group:{scope}"
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data=back_target)
     
     # Adjust: each student on own row, then nav buttons together, then back
     row_sizes = [1] * len(page_students)
@@ -307,17 +294,45 @@ def get_students_list_keyboard(students: List[Dict[str, Any]], action: str = "de
     return builder.as_markup()
 
 
-def get_student_detail_keyboard(user_id: str) -> InlineKeyboardMarkup:
+def get_student_detail_keyboard(user_id: str, back_target: str = "students:list") -> InlineKeyboardMarkup:
     """Student detail actions keyboard"""
     builder = InlineKeyboardBuilder()
     
     builder.button(text=f"{config.EMOJIS['add']} Add Points", callback_data=f"add_points:{user_id}")
     builder.button(text=f"{config.EMOJIS['subtract']} Subtract Points", callback_data=f"subtract_points:{user_id}")
+    builder.button(text="Transfer Limits", callback_data=f"stl:{user_id}")
     builder.button(text=f"{config.EMOJIS['delete']} Delete Student", callback_data=f"delete_student:{user_id}")
-    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="students:list")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data=back_target)
     
-    builder.adjust(2, 1, 1)
+    builder.adjust(2, 1, 1, 1)
     
+    return builder.as_markup()
+
+
+def get_student_transfer_limits_keyboard(user_id: str, settings: Dict[str, Any]) -> InlineKeyboardMarkup:
+    """Per-student transfer limit override keyboard."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text=f"Daily Count: {int(settings.get('daily_transfer_count_limit', 0) or 0)}",
+        callback_data=f"stl:set:{user_id}:dc"
+    )
+    builder.button(
+        text=f"Weekly Count: {int(settings.get('weekly_transfer_count_limit', 0) or 0)}",
+        callback_data=f"stl:set:{user_id}:wc"
+    )
+    builder.button(
+        text=f"Daily Points: {int(settings.get('daily_transfer_points_limit', 0) or 0)}",
+        callback_data=f"stl:set:{user_id}:dp"
+    )
+    builder.button(
+        text=f"Weekly Points: {int(settings.get('weekly_transfer_points_limit', 0) or 0)}",
+        callback_data=f"stl:set:{user_id}:wp"
+    )
+    builder.button(text="Reset Override", callback_data=f"stl:reset:{user_id}")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data=f"student_detail:{user_id}:all")
+
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
 
@@ -437,6 +452,34 @@ def get_commission_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_transfer_limits_keyboard(settings: Dict[str, Any]) -> InlineKeyboardMarkup:
+    """Transfer limits settings keyboard."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(
+        text=f"Daily Count: {int(settings.get('daily_transfer_count_limit', 0) or 0)}",
+        callback_data="transfer_limits:set:daily_transfer_count_limit"
+    )
+    builder.button(
+        text=f"Weekly Count: {int(settings.get('weekly_transfer_count_limit', 0) or 0)}",
+        callback_data="transfer_limits:set:weekly_transfer_count_limit"
+    )
+    builder.button(
+        text=f"Daily Points: {int(settings.get('daily_transfer_points_limit', 0) or 0)}",
+        callback_data="transfer_limits:set:daily_transfer_points_limit"
+    )
+    builder.button(
+        text=f"Weekly Points: {int(settings.get('weekly_transfer_points_limit', 0) or 0)}",
+        callback_data="transfer_limits:set:weekly_transfer_points_limit"
+    )
+    builder.button(text="Reset Usage", callback_data="transfer_limits:reset_usage")
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
+
+    builder.adjust(2, 2, 1, 1)
+
+    return builder.as_markup()
+
+
 def get_broadcast_keyboard() -> InlineKeyboardMarkup:
     """Broadcast message keyboard"""
     builder = InlineKeyboardBuilder()
@@ -463,7 +506,9 @@ def get_group_selection_keyboard(groups: list, action: str = "select_group") -> 
                 callback_data=f"{action}:{group['group_id']}"
             )
         else:
-            student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
+            student_count = group.get('student_count')
+            if student_count is None:
+                student_count = len(db.get_all_users(role='student', status='active', group_id=group['group_id']))
             builder.button(
                 text=f"📁 {group['name']} ({student_count} students)",
                 callback_data=f"{action}:group:{group['group_id']}"
@@ -492,7 +537,7 @@ def get_edit_rules_keyboard() -> InlineKeyboardMarkup:
 
 def get_groups_management_keyboard(teacher_id: str) -> InlineKeyboardMarkup:
     """Groups management main menu with refresh at bottom"""
-    from database import db
+    from app.database import db
     
     builder = InlineKeyboardBuilder()
     
@@ -519,8 +564,10 @@ def get_groups_list_keyboard(groups: List[Dict[str, Any]], action: str = "view")
     for group in groups:
         group_id = group.get('group_id', '')
         name = group.get('name', 'Unknown')
-        student_count = len(db.get_all_users(role='student', status='active', group_id=group_id))
-        
+        student_count = group.get('student_count')
+        if student_count is None:
+            student_count = len(db.get_all_users(role='student', status='active', group_id=group_id))
+
         builder.button(
             text=f"📚 {name} ({student_count} students)",
             callback_data=f"group_{action}:{group_id}"
