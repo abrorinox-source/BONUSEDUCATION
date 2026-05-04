@@ -78,7 +78,8 @@ COLLECTIONS = {
     'TRANSACTION_LOGS': 'transaction_logs',
     'GROUPS': 'groups',
     'TRANSFER_LIMIT_USAGE': 'transfer_limit_usage',
-    'TRANSFER_LIMIT_OVERRIDES': 'transfer_limit_overrides'
+    'TRANSFER_LIMIT_OVERRIDES': 'transfer_limit_overrides',
+    'TRANSFER_REQUESTS': 'transfer_requests'
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

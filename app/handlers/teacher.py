@@ -634,6 +634,190 @@ async def confirm_delete_student(callback: CallbackQuery):
 # CANCEL HANDLERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@router.callback_query(F.data.startswith("transfer_approve:"))
+async def approve_transfer_request(callback: CallbackQuery, user: dict):
+    """Approve and execute a pending student transfer."""
+    if user.get('role') != 'teacher':
+        await safe_answer_callback(callback, "Only teachers can approve transfers.", show_alert=True)
+        return
+
+    request_id = callback.data.split(":", 1)[1]
+    request = db.get_transfer_request(request_id)
+
+    if not request:
+        await safe_answer_callback(callback, "Transfer request not found", show_alert=True)
+        return
+    if request.get('status') != 'pending':
+        await safe_edit_message(callback, f"Transfer request is already {request.get('status', 'processed')}.")
+        await safe_answer_callback(callback)
+        return
+
+    sender_id = str(request.get('sender_id', ''))
+    recipient_id = str(request.get('recipient_id', ''))
+    amount = int(request.get('amount', 0) or 0)
+    commission = int(request.get('commission', 0) or 0)
+
+    if not db.update_transfer_request(request_id, {
+        'status': 'processing',
+        'approved_by': str(callback.from_user.id),
+    }):
+        await safe_answer_callback(callback, "Failed to lock transfer request", show_alert=True)
+        return
+
+    result = db.transfer_points(
+        sender_id,
+        recipient_id,
+        amount,
+        commission,
+        sender_group=request.get('sender_group'),
+        recipient_group=request.get('recipient_group')
+    )
+    if not result['success']:
+        db.update_transfer_request(request_id, {
+            'status': 'failed',
+            'approved_by': str(callback.from_user.id),
+            'error': result.get('error', 'Unknown error')
+        })
+        await safe_edit_message(
+            callback,
+            "Transfer approval failed.\n\n"
+            f"From: {request.get('sender_name', 'Unknown')}\n"
+            f"To: {request.get('recipient_name', 'Unknown')}\n"
+            f"Amount: {amount} pts\n"
+            f"Reason: {result.get('error', 'Unknown error')}"
+        )
+        try:
+            await callback.bot.send_message(
+                chat_id=sender_id,
+                text=(
+                    "Your transfer request could not be approved.\n\n"
+                    f"To: {request.get('recipient_name', 'Unknown')}\n"
+                    f"Amount: {amount} pts\n"
+                    f"Reason: {result.get('error', 'Unknown error')}"
+                )
+            )
+        except Exception:
+            pass
+        await safe_answer_callback(callback)
+        return
+
+    sender = db.get_user(sender_id) or {}
+    recipient = db.get_user(recipient_id) or {}
+    sender_name = request.get('sender_name') or sender.get('full_name', 'Unknown')
+    recipient_name = request.get('recipient_name') or recipient.get('full_name', 'Unknown')
+
+    db.log_transfer(
+        sender_id=sender_id,
+        recipient_id=recipient_id,
+        amount=amount,
+        commission=commission,
+        sender_name=sender_name,
+        recipient_name=recipient_name,
+        sender_old_balance=result['sender_balance'] + amount + commission,
+        sender_new_balance=result['sender_balance'],
+        recipient_old_balance=result['recipient_balance'] - amount,
+        recipient_new_balance=result['recipient_balance']
+    )
+    db.update_transfer_request(request_id, {
+        'status': 'approved',
+        'approved_by': str(callback.from_user.id),
+        'sender_new_balance': result['sender_balance'],
+        'recipient_new_balance': result['recipient_balance'],
+    })
+
+    await safe_edit_message(
+        callback,
+        "Transfer approved and completed.\n\n"
+        f"From: {sender_name}\n"
+        f"To: {recipient_name}\n"
+        f"Amount: {amount} pts\n"
+        f"Commission: {commission} pts\n"
+        f"Sender Balance: {result['sender_balance']} pts\n"
+        f"Recipient Balance: {result['recipient_balance']} pts"
+    )
+
+    try:
+        await callback.bot.send_message(
+            chat_id=sender_id,
+            text=config.MESSAGES['transfer_success_sender'].format(
+                amount=amount,
+                recipient_name=recipient_name,
+                commission=commission,
+                new_balance=result['sender_balance']
+            )
+        )
+    except Exception:
+        pass
+
+    try:
+        await callback.bot.send_message(
+            chat_id=recipient_id,
+            text=config.MESSAGES['transfer_success_recipient'].format(
+                amount=amount,
+                sender_name=sender_name,
+                new_balance=result['recipient_balance']
+            )
+        )
+    except Exception:
+        pass
+
+    await safe_answer_callback(callback, "Transfer approved")
+
+
+@router.callback_query(F.data.startswith("transfer_reject:"))
+async def reject_transfer_request(callback: CallbackQuery, user: dict):
+    """Reject a pending student transfer."""
+    if user.get('role') != 'teacher':
+        await safe_answer_callback(callback, "Only teachers can reject transfers.", show_alert=True)
+        return
+
+    request_id = callback.data.split(":", 1)[1]
+    request = db.get_transfer_request(request_id)
+
+    if not request:
+        await safe_answer_callback(callback, "Transfer request not found", show_alert=True)
+        return
+    if request.get('status') != 'pending':
+        await safe_edit_message(callback, f"Transfer request is already {request.get('status', 'processed')}.")
+        await safe_answer_callback(callback)
+        return
+
+    db.update_transfer_request(request_id, {
+        'status': 'rejected',
+        'rejected_by': str(callback.from_user.id),
+    })
+
+    sender_id = str(request.get('sender_id', ''))
+    sender_name = request.get('sender_name', 'Unknown')
+    recipient_name = request.get('recipient_name', 'Unknown')
+    amount = int(request.get('amount', 0) or 0)
+    commission = int(request.get('commission', 0) or 0)
+
+    await safe_edit_message(
+        callback,
+        "Transfer rejected.\n\n"
+        f"From: {sender_name}\n"
+        f"To: {recipient_name}\n"
+        f"Amount: {amount} pts\n"
+        f"Commission: {commission} pts"
+    )
+
+    try:
+        await callback.bot.send_message(
+            chat_id=sender_id,
+            text=(
+                "Your transfer request was rejected by the teacher.\n\n"
+                f"To: {recipient_name}\n"
+                f"Amount: {amount} pts\n"
+                f"Commission: {commission} pts"
+            )
+        )
+    except Exception:
+        pass
+
+    await safe_answer_callback(callback, "Transfer rejected")
+
+
 @router.callback_query(F.data.startswith("cancel:"))
 async def cancel_action(callback: CallbackQuery, state: FSMContext):
     """Cancel current action"""
@@ -920,6 +1104,52 @@ async def show_pending_detail(callback: CallbackQuery):
             reply_markup=keyboards.get_approval_keyboard(user_id, from_pending=True)
         )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("transfer_pending_detail:"))
+async def show_transfer_pending_detail(callback: CallbackQuery, user: dict):
+    """Show pending transfer request detail from the Pending menu."""
+    if user.get('role') != 'teacher':
+        await safe_answer_callback(callback, "Only teachers can view transfer requests.", show_alert=True)
+        return
+
+    request_id = callback.data.split(":", 1)[1]
+    request = db.get_transfer_request(request_id)
+
+    if not request:
+        await safe_answer_callback(callback, "Transfer request not found", show_alert=True)
+        return
+
+    if request.get('status') != 'pending':
+        await safe_edit_message(
+            callback,
+            f"Transfer request is already {request.get('status', 'processed')}.",
+            reply_markup=keyboards.get_back_keyboard("teacher:pending")
+        )
+        await safe_answer_callback(callback)
+        return
+
+    amount = int(request.get('amount', 0) or 0)
+    commission = int(request.get('commission', 0) or 0)
+    text = (
+        "TRANSFER APPROVAL REQUEST\n\n"
+        f"From: {request.get('sender_name', 'Unknown')}\n"
+        f"To: {request.get('recipient_name', 'Unknown')}\n"
+        f"Amount: {amount} pts\n"
+        f"Commission: {commission} pts\n"
+        f"Total Cost: {amount + commission} pts\n"
+        f"Sender Balance at Request: {request.get('sender_balance_at_request', 'N/A')} pts\n"
+        f"From Group: {request.get('sender_group', 'N/A')}\n"
+        f"To Group: {request.get('recipient_group', 'N/A')}\n\n"
+        "Approve or reject this transfer?"
+    )
+
+    await safe_edit_message(
+        callback,
+        text,
+        reply_markup=keyboards.get_transfer_approval_keyboard(request_id)
+    )
+    await safe_answer_callback(callback)
 
 
 @router.callback_query(F.data.startswith("pending_page:"))
@@ -1580,6 +1810,22 @@ async def handle_transaction_logs(callback: CallbackQuery):
 async def handle_commission(callback: CallbackQuery):
     """Handle commission rate changes"""
     action = callback.data.split(":")[1]
+
+    if action == "reset_pool":
+        if not db.update_settings({'commission_pool': 0}):
+            await callback.answer("Failed to reset commission pool", show_alert=True)
+            return
+
+        settings = db.get_settings()
+        commission_rate = settings.get('commission_rate', config.DEFAULT_COMMISSION_RATE)
+        await callback.answer("Commission pool reset")
+        await callback.message.edit_text(
+            "COMMISSION POOL RESET\n"
+            "Commission Pool: 0 pts\n\n"
+            f"Current Rate: {commission_rate * 100}%",
+            reply_markup=keyboards.get_commission_keyboard()
+        )
+        return
 
     if action == "set":
         rate = int(callback.data.split(":")[2])

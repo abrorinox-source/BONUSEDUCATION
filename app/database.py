@@ -35,6 +35,7 @@ class FirebaseDB:
         self.logs_ref = self.db.collection(config.COLLECTIONS['TRANSACTION_LOGS'])
         self.transfer_limit_usage_ref = self.db.collection(config.COLLECTIONS['TRANSFER_LIMIT_USAGE'])
         self.transfer_limit_overrides_ref = self.db.collection(config.COLLECTIONS['TRANSFER_LIMIT_OVERRIDES'])
+        self.transfer_requests_ref = self.db.collection(config.COLLECTIONS['TRANSFER_REQUESTS'])
         self._settings_cache = None
         self._points_lock = threading.RLock()
 
@@ -70,6 +71,15 @@ class FirebaseDB:
         except Exception:
             pass
         return None
+
+    def get_user_in_group(self, user_id: str, group_id: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+        """Get an active Sheets student from a known group without scanning all sheets."""
+        from app.sheets_manager import sheets_manager
+        try:
+            return sheets_manager.get_user_in_group(user_id, group_id, force_refresh=force_refresh)
+        except Exception as e:
+            print(f"Error getting user from group: {e}")
+            return None
 
 
     def create_user(self, user_id: str, user_data: Dict[str, Any]) -> bool:
@@ -154,6 +164,13 @@ class FirebaseDB:
         except Exception:
             pass
 
+        if role == 'teacher':
+            if status:
+                users = [u for u in users if u.get('status') == status]
+            if group_id:
+                users = [u for u in users if u.get('group_id') == group_id]
+            return [u for u in users if u.get('role') == 'teacher']
+
         from app.sheets_manager import sheets_manager
         users.extend(sheets_manager.get_all_users(group_id=group_id, force_refresh=force_refresh))
         if role:
@@ -172,7 +189,7 @@ class FirebaseDB:
 
 
     def get_pending_approvals(self) -> List[Dict[str, Any]]:
-        """Return pending student registrations and restorations from Firestore."""
+        """Return pending registrations, restorations, and transfer requests."""
         pending: List[Dict[str, Any]] = []
         try:
             for doc in self.users_ref.stream():
@@ -180,6 +197,18 @@ class FirebaseDB:
                 if data.get('status') in ('pending', 'pending_restore'):
                     data['user_id'] = doc.id
                     pending.append(data)
+        except Exception:
+            pass
+        try:
+            for doc in self.transfer_requests_ref.where('status', '==', 'pending').stream():
+                data = doc.to_dict() or {}
+                data['request_id'] = doc.id
+                data['type'] = 'transfer_request'
+                data['full_name'] = (
+                    f"{data.get('sender_name', 'Unknown')} -> "
+                    f"{data.get('recipient_name', 'Unknown')}"
+                )
+                pending.append(data)
         except Exception:
             pass
         return pending
@@ -402,6 +431,44 @@ class FirebaseDB:
             print(f"Error resetting transfer usage: {e}")
             return False
 
+    def create_transfer_request(self, request_data: Dict[str, Any]) -> Optional[str]:
+        """Create a teacher-approved transfer request."""
+        try:
+            payload = dict(request_data)
+            payload['status'] = 'pending'
+            payload['created_at'] = SERVER_TIMESTAMP
+            doc_ref = self.transfer_requests_ref.document()
+            payload['request_id'] = doc_ref.id
+            doc_ref.set(payload)
+            return doc_ref.id
+        except Exception as e:
+            print(f"Error creating transfer request: {e}")
+            return None
+
+    def get_transfer_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+        """Get a pending transfer request by id."""
+        try:
+            doc = self.transfer_requests_ref.document(str(request_id)).get()
+            if not doc.exists:
+                return None
+            data = doc.to_dict() or {}
+            data['request_id'] = doc.id
+            return data
+        except Exception as e:
+            print(f"Error getting transfer request: {e}")
+            return None
+
+    def update_transfer_request(self, request_id: str, updates: Dict[str, Any]) -> bool:
+        """Update transfer request metadata."""
+        try:
+            payload = dict(updates)
+            payload['updated_at'] = SERVER_TIMESTAMP
+            self.transfer_requests_ref.document(str(request_id)).set(payload, merge=True)
+            return True
+        except Exception as e:
+            print(f"Error updating transfer request: {e}")
+            return False
+
     def add_points(self, user_id: str, amount: int) -> Dict[str, Any]:
         """Add points to an active user stored in Sheets."""
         try:
@@ -434,7 +501,15 @@ class FirebaseDB:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-    def transfer_points(self, sender_id: str, recipient_id: str, amount: int, commission: int) -> Dict[str, Any]:
+    def transfer_points(
+        self,
+        sender_id: str,
+        recipient_id: str,
+        amount: int,
+        commission: int,
+        sender_group: str = None,
+        recipient_group: str = None
+    ) -> Dict[str, Any]:
         """Transfer points between active Sheets users."""
         try:
             amount = int(amount)
@@ -447,8 +522,16 @@ class FirebaseDB:
                 return {'success': False, 'error': 'Commission cannot be negative'}
 
             with self._points_lock:
-                sender = self.get_user(sender_id)
-                recipient = self.get_user(recipient_id)
+                sender = (
+                    self.get_user_in_group(sender_id, sender_group, force_refresh=True)
+                    if sender_group else
+                    self.get_user(sender_id, force_refresh=True)
+                )
+                recipient = (
+                    self.get_user_in_group(recipient_id, recipient_group, force_refresh=True)
+                    if recipient_group else
+                    self.get_user(recipient_id, force_refresh=True)
+                )
 
                 if not sender or not recipient:
                     return {'success': False, 'error': 'User not found'}
@@ -471,23 +554,57 @@ class FirebaseDB:
                 new_sender_balance = sender_balance - total_cost
                 new_recipient_balance = recipient_balance + amount
 
-                if not self.update_user(sender_id, {'points': new_sender_balance}):
-                    return {'success': False, 'error': 'Failed to update sender balance'}
-
-                if not self.update_user(recipient_id, {'points': new_recipient_balance}):
-                    self.update_user(sender_id, {'points': sender_balance})
-                    return {'success': False, 'error': 'Failed to update recipient balance'}
+                from app.sheets_manager import sheets_manager
+                if not sheets_manager.batch_update_points([
+                    {
+                        'user_id': sender_id,
+                        'sheet_name': sender.get('group_id', 'Sheet1'),
+                        'row_index': sender.get('sheet_row_index'),
+                        'points': new_sender_balance,
+                    },
+                    {
+                        'user_id': recipient_id,
+                        'sheet_name': recipient.get('group_id', 'Sheet1'),
+                        'row_index': recipient.get('sheet_row_index'),
+                        'points': new_recipient_balance,
+                    }
+                ]):
+                    return {'success': False, 'error': 'Failed to update transfer balances'}
 
                 current_pool = int(self.get_settings().get('commission_pool', 0) or 0)
                 if commission > 0:
                     if not self.update_settings({'commission_pool': current_pool + commission}):
-                        self.update_user(sender_id, {'points': sender_balance})
-                        self.update_user(recipient_id, {'points': recipient_balance})
+                        sheets_manager.batch_update_points([
+                            {
+                                'user_id': sender_id,
+                                'sheet_name': sender.get('group_id', 'Sheet1'),
+                                'row_index': sender.get('sheet_row_index'),
+                                'points': sender_balance,
+                            },
+                            {
+                                'user_id': recipient_id,
+                                'sheet_name': recipient.get('group_id', 'Sheet1'),
+                                'row_index': recipient.get('sheet_row_index'),
+                                'points': recipient_balance,
+                            }
+                        ])
                         return {'success': False, 'error': 'Failed to update commission pool'}
 
                 if not self.record_transfer_usage(sender_id, amount, usage=limit_check['usage']):
-                    self.update_user(sender_id, {'points': sender_balance})
-                    self.update_user(recipient_id, {'points': recipient_balance})
+                    sheets_manager.batch_update_points([
+                        {
+                            'user_id': sender_id,
+                            'sheet_name': sender.get('group_id', 'Sheet1'),
+                            'row_index': sender.get('sheet_row_index'),
+                            'points': sender_balance,
+                        },
+                        {
+                            'user_id': recipient_id,
+                            'sheet_name': recipient.get('group_id', 'Sheet1'),
+                            'row_index': recipient.get('sheet_row_index'),
+                            'points': recipient_balance,
+                        }
+                    ])
                     if commission > 0:
                         self.update_settings({'commission_pool': current_pool})
                     return {'success': False, 'error': 'Failed to update transfer limit usage'}

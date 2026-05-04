@@ -3,7 +3,6 @@ Student handlers
 All student-related functionality
 """
 
-import asyncio
 import math
 
 from aiogram import Router, F
@@ -77,6 +76,49 @@ async def send_transfer_notifications(
             await callback.bot.send_message(chat_id=teacher_id, text=teacher_notification)
         except Exception:
             pass
+
+
+async def notify_teachers_transfer_request(
+    bot,
+    request_id: str,
+    sender: dict,
+    recipient: dict,
+    amount: int,
+    commission: int,
+):
+    """Ask active teachers to approve or reject a student transfer."""
+    teacher_ids = {
+        str(teacher.get('user_id', '')).strip()
+        for teacher in db.get_all_users(role='teacher', status='active')
+        if str(teacher.get('user_id', '')).strip().isdigit()
+    }
+    if not teacher_ids:
+        return
+
+    sender_group = sender.get('group_id', 'N/A')
+    recipient_group = recipient.get('group_id', 'N/A')
+    text = (
+        "TRANSFER APPROVAL REQUEST\n\n"
+        f"From: {sender.get('full_name', 'Unknown')}\n"
+        f"To: {recipient.get('full_name', 'Unknown')}\n"
+        f"Amount: {amount} pts\n"
+        f"Commission: {commission} pts\n"
+        f"Total Cost: {amount + commission} pts\n"
+        f"Sender Balance: {sender.get('points', 0)} pts\n"
+        f"From Group: {sender_group}\n"
+        f"To Group: {recipient_group}\n\n"
+        "Approve or reject this transfer?"
+    )
+
+    for teacher_id in teacher_ids:
+        try:
+            await bot.send_message(
+                chat_id=teacher_id,
+                text=text,
+                reply_markup=keyboards.get_transfer_approval_keyboard(request_id)
+            )
+        except Exception as e:
+            print(f"Error notifying teacher {teacher_id} about transfer request: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -254,7 +296,7 @@ async def show_support(message: Message):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith("transfer:"))
-async def select_transfer_group(callback: CallbackQuery):
+async def select_transfer_group(callback: CallbackQuery, state: FSMContext):
     """Show students in selected group for transfer"""
     # Format: transfer:group:{group_id}
     parts = callback.data.split(":")
@@ -276,6 +318,7 @@ async def select_transfer_group(callback: CallbackQuery):
     # Get group name
     group = db.get_group(group_id)
     group_name = group.get('name', group_id) if group else group_id
+    await state.update_data(recipient_group_id=group_id)
     
     await callback.message.edit_text(
         f"💸 TRANSFER POINTS\n\n"
@@ -287,7 +330,7 @@ async def select_transfer_group(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("transfer_page:"))
-async def transfer_page_handler(callback: CallbackQuery):
+async def transfer_page_handler(callback: CallbackQuery, state: FSMContext):
     """Handle transfer recipients pagination — Format: transfer_page:{group_id}:{page}"""
     parts = callback.data.split(":")
     group_id = parts[1]
@@ -299,6 +342,7 @@ async def transfer_page_handler(callback: CallbackQuery):
 
     group = db.get_group(group_id)
     group_name = group.get('name', group_id) if group else group_id
+    await state.update_data(recipient_group_id=group_id)
 
     if not students:
         await callback.answer("❌ No students found", show_alert=True)
@@ -315,7 +359,13 @@ async def transfer_page_handler(callback: CallbackQuery):
 async def select_recipient(callback: CallbackQuery, state: FSMContext):
     """Recipient selected, ask for amount"""
     recipient_id = callback.data.split(":")[1]
-    recipient = db.get_user(recipient_id)
+    data = await state.get_data()
+    recipient_group_id = data.get('recipient_group_id')
+    recipient = (
+        db.get_user_in_group(recipient_id, recipient_group_id)
+        if recipient_group_id else
+        db.get_user(recipient_id)
+    )
     
     if not recipient:
         await callback.answer("❌ Recipient not found!", show_alert=True)
@@ -328,7 +378,11 @@ async def select_recipient(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    await state.update_data(recipient_id=recipient_id, recipient_name=recipient['full_name'])
+    await state.update_data(
+        recipient_id=recipient_id,
+        recipient_name=recipient['full_name'],
+        recipient_group_id=recipient.get('group_id')
+    )
     await state.set_state(states.TransferStates.waiting_for_amount)
     
     await callback.message.answer(
@@ -358,13 +412,21 @@ async def process_transfer_amount(message: Message, state: FSMContext, user: dic
             await message.answer(f"Transfer limit reached:\n{limit_check['error']}")
             await state.clear()
             return
+
+        sender_id = str(message.from_user.id)
+        sender_group_id = user.get('group_id')
+        current_user = (
+            db.get_user_in_group(sender_id, sender_group_id, force_refresh=True)
+            if sender_group_id else
+            db.get_user(sender_id, force_refresh=True)
+        ) or user
         
         # Check balance
-        if user['points'] < total_cost:
+        if current_user['points'] < total_cost:
             await message.answer(
                 config.MESSAGES['insufficient_balance'].format(
                     required=total_cost,
-                    available=user['points']
+                    available=current_user['points']
                 )
             )
             await state.clear()
@@ -372,7 +434,12 @@ async def process_transfer_amount(message: Message, state: FSMContext, user: dic
         
         # Get recipient data
         data = await state.get_data()
-        recipient = db.get_user(data['recipient_id'])
+        recipient_group_id = data.get('recipient_group_id')
+        recipient = (
+            db.get_user_in_group(data['recipient_id'], recipient_group_id)
+            if recipient_group_id else
+            db.get_user(data['recipient_id'])
+        )
 
         if not recipient or recipient.get('is_manual') or not str(recipient.get('user_id', '')).strip().isdigit():
             await message.answer("Bu foydalanuvchining Telegram IDsi yo'q. Unga ball o'tkazib bo'lmaydi.")
@@ -386,8 +453,8 @@ async def process_transfer_amount(message: Message, state: FSMContext, user: dic
             commission_rate=int(commission_rate * 100),
             commission=commission,
             total=total_cost,
-            current_balance=user['points'],
-            after_balance=user['points'] - total_cost
+            current_balance=current_user['points'],
+            after_balance=current_user['points'] - total_cost
         )
         text += (
             "\n\nCommission formula: ceil(amount x rate)\n"
@@ -410,7 +477,7 @@ async def process_transfer_amount(message: Message, state: FSMContext, user: dic
 
 @router.callback_query(F.data.startswith("confirm:transfer:"))
 async def confirm_transfer(callback: CallbackQuery, state: FSMContext, user: dict):
-    """Execute transfer"""
+    """Create a transfer request for teacher approval."""
     transfer_key = (str(callback.from_user.id), callback.data)
     if transfer_key in active_transfer_confirms:
         await safe_answer_callback(callback, "Transfer is already being processed.")
@@ -433,51 +500,57 @@ async def confirm_transfer(callback: CallbackQuery, state: FSMContext, user: dic
 
         data = await state.get_data()
 
-        result = db.transfer_points(sender_id, recipient_id, amount, commission)
+        sender_group_id = user.get('group_id')
+        recipient_group_id = data.get('recipient_group_id')
+        sender = (
+            db.get_user_in_group(sender_id, sender_group_id, force_refresh=True)
+            if sender_group_id else
+            db.get_user(sender_id, force_refresh=True)
+        ) or user
+        recipient = (
+            db.get_user_in_group(recipient_id, recipient_group_id, force_refresh=True)
+            if recipient_group_id else
+            db.get_user(recipient_id, force_refresh=True)
+        )
+        if not recipient:
+            await callback.message.edit_text("Transfer failed: recipient not found.")
+            await state.clear()
+            return
 
-        if result['success']:
-            recipient = db.get_user(recipient_id)
-            recipient_name = recipient['full_name'] if recipient else data.get('recipient_name', 'Unknown')
-            recipient_group = recipient.get('group_id', 'N/A') if recipient else 'N/A'
+        request_id = db.create_transfer_request({
+            'sender_id': sender_id,
+            'sender_name': sender.get('full_name', user.get('full_name', 'Unknown')),
+            'recipient_id': recipient_id,
+            'recipient_name': recipient.get('full_name', data.get('recipient_name', 'Unknown')),
+            'amount': amount,
+            'commission': commission,
+            'sender_group': sender.get('group_id', 'N/A'),
+            'recipient_group': recipient.get('group_id', 'N/A'),
+            'sender_balance_at_request': int(sender.get('points', 0) or 0),
+        })
 
-            db.log_transfer(
-                sender_id=sender_id,
-                recipient_id=recipient_id,
-                amount=amount,
-                commission=commission,
-                sender_name=user['full_name'],
-                recipient_name=recipient_name,
-                sender_old_balance=result['sender_balance'] + amount + commission,
-                sender_new_balance=result['sender_balance'],
-                recipient_old_balance=result['recipient_balance'] - amount,
-                recipient_new_balance=result['recipient_balance']
-            )
+        if not request_id:
+            await callback.message.edit_text("Transfer request failed. Please try again later.")
+            await state.clear()
+            return
 
-            await callback.message.edit_text(
-                config.MESSAGES['transfer_success_sender'].format(
-                    amount=amount,
-                    recipient_name=data['recipient_name'],
-                    commission=commission,
-                    new_balance=result['sender_balance']
-                )
-            )
+        await notify_teachers_transfer_request(
+            bot=callback.bot,
+            request_id=request_id,
+            sender=sender,
+            recipient=recipient,
+            amount=amount,
+            commission=commission,
+        )
 
-            asyncio.create_task(
-                send_transfer_notifications(
-                    callback=callback,
-                    recipient_id=recipient_id,
-                    recipient_name=recipient_name,
-                    sender_name=user['full_name'],
-                    amount=amount,
-                    commission=commission,
-                    sender_balance=result['sender_balance'],
-                    recipient_balance=result['recipient_balance'],
-                    sender_group=user.get('group_id', 'N/A'),
-                    recipient_group=recipient_group,
-                )
-            )
-        else:
-            await callback.message.edit_text(f"Transfer failed: {result['error']}")
+        await callback.message.edit_text(
+            "Transfer request sent to teacher for approval.\n\n"
+            f"To: {recipient.get('full_name', data.get('recipient_name', 'Unknown'))}\n"
+            f"Amount: {amount} pts\n"
+            f"Commission: {commission} pts\n"
+            f"Total Cost: {amount + commission} pts\n\n"
+            "Your points will be transferred only after teacher approval."
+        )
 
         await state.clear()
     finally:

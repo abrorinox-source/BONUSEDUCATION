@@ -88,6 +88,10 @@ class GoogleSheetsManager:
         manual_user_id = self._manual_user_id(sheet_name, row_index)
         return identifier == actual_user_id or identifier == manual_user_id
 
+    def _a1_sheet_name(self, sheet_name: str) -> str:
+        """Quote a sheet tab name for A1 notation."""
+        return f"'{str(sheet_name).replace(chr(39), chr(39) + chr(39))}'"
+
     # ═══════════════════════════════════════════════════════════════════════════
     # SHEET/TAB MANAGEMENT
     # ═══════════════════════════════════════════════════════════════════════════
@@ -133,6 +137,19 @@ class GoogleSheetsManager:
                         return row
             except Exception as e:
                 print(f"Error reading user from {sheet_name}: {e}")
+        return None
+
+    def get_user_in_group(self, user_id: str, group_id: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
+        """Get a single user from one sheet tab."""
+        if not group_id:
+            return None
+        try:
+            for row in self.fetch_all_data(sheet_name=group_id, force_refresh=force_refresh):
+                if row.get('user_id') == user_id:
+                    row['group_id'] = group_id
+                    return row
+        except Exception as e:
+            print(f"Error reading user {user_id} from {group_id}: {e}")
         return None
 
     def get_all_users(self, group_id: Optional[str] = None, force_refresh: bool = False) -> List[Dict[str, Any]]:
@@ -411,6 +428,54 @@ class GoogleSheetsManager:
 
         except HttpError as e:
             print(f"Error updating Sheets: {e}")
+            return False
+
+    def batch_update_points(self, updates: List[Dict[str, Any]]) -> bool:
+        """Update multiple user point balances in one Google Sheets request."""
+        try:
+            timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            data = []
+            touched_sheets = set()
+
+            for update in updates:
+                sheet_name = update.get('sheet_name') or update.get('group_id') or 'Sheet1'
+                row_index = update.get('row_index')
+                user_id = str(update.get('user_id', '')).strip()
+
+                if row_index is None:
+                    all_data = self.fetch_all_data(sheet_name=sheet_name)
+                    for idx, user in enumerate(all_data, start=2):
+                        if self._matches_identifier(user, user_id, sheet_name, idx):
+                            row_index = idx
+                            break
+
+                if row_index is None:
+                    print(f"User {user_id} not found in {sheet_name}")
+                    return False
+
+                touched_sheets.add(sheet_name)
+                data.append({
+                    'range': f'{self._a1_sheet_name(sheet_name)}!E{row_index}:F{row_index}',
+                    'values': [[int(update['points']), timestamp]]
+                })
+
+            if not data:
+                return True
+
+            self.service.spreadsheets().values().batchUpdate(
+                spreadsheetId=self.sheet_id,
+                body={
+                    'valueInputOption': 'RAW',
+                    'data': data
+                }
+            ).execute()
+
+            for sheet_name in touched_sheets:
+                self.invalidate_cache(sheet_name)
+            return True
+
+        except HttpError as e:
+            print(f"Error batch updating point balances: {e}")
             return False
 
     def update_user_row(self, user_id: str, user_data: Dict[str, Any], sheet_name: str = 'Sheet1') -> bool:

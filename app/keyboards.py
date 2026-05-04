@@ -158,6 +158,17 @@ def get_confirmation_keyboard(action: str, data: str = "") -> InlineKeyboardMark
     return builder.as_markup()
 
 
+def get_transfer_approval_keyboard(request_id: str) -> InlineKeyboardMarkup:
+    """Approval keyboard for pending transfer requests."""
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text=f"{config.EMOJIS['approve']} Approve", callback_data=f"transfer_approve:{request_id}")
+    builder.button(text=f"{config.EMOJIS['reject']} Reject", callback_data=f"transfer_reject:{request_id}")
+
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def get_settings_keyboard() -> InlineKeyboardMarkup:
     """Settings menu keyboard"""
     builder = InlineKeyboardBuilder()
@@ -445,9 +456,10 @@ def get_commission_keyboard() -> InlineKeyboardMarkup:
     for rate in rates:
         builder.button(text=f"{rate}%", callback_data=f"commission:set:{rate}")
     
+    builder.button(text="Reset Pool", callback_data="commission:reset_pool")
     builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="settings:back")
     
-    builder.adjust(4, 4, 1)
+    builder.adjust(4, 4, 1, 1)
     
     return builder.as_markup()
 
@@ -597,3 +609,43 @@ def get_group_detail_keyboard(group_id: str) -> InlineKeyboardMarkup:
 
 
 # Removed duplicate - using the version at line 341 instead
+
+
+def get_pending_list_keyboard(pending_users: List[Dict[str, Any]], page: int = 0, page_size: int = 5) -> InlineKeyboardMarkup:
+    """Pending approvals list keyboard, including transfer requests."""
+    builder = InlineKeyboardBuilder()
+
+    total = len(pending_users)
+    start = page * page_size
+    end = start + page_size
+    page_users = pending_users[start:end]
+
+    for item in page_users:
+        name = item.get('full_name', 'Unknown')
+        status = item.get('status', '')
+        is_transfer = item.get('type') == 'transfer_request'
+        prefix = "Transfer" if is_transfer else "Restore" if status == 'pending_restore' else "New"
+        callback_data = (
+            f"transfer_pending_detail:{item.get('request_id', '')}"
+            if is_transfer else
+            f"pending_detail:{item.get('user_id', '')}"
+        )
+        builder.button(text=f"{prefix}: {name}", callback_data=callback_data)
+
+    nav_buttons = 0
+    if page > 0:
+        builder.button(text="Oldingi", callback_data=f"pending_page:{page - 1}")
+        nav_buttons += 1
+    if end < total:
+        builder.button(text="Keyingi", callback_data=f"pending_page:{page + 1}")
+        nav_buttons += 1
+
+    builder.button(text=f"{config.EMOJIS['back']} Back", callback_data="teacher:menu")
+
+    row_sizes = [1] * len(page_users)
+    if nav_buttons > 0:
+        row_sizes.append(nav_buttons)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
+
+    return builder.as_markup()
