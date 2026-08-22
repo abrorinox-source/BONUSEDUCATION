@@ -1,58 +1,34 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
-    }
+    function signedIn() { return request.auth != null; }
+    function userDoc() { return signedIn() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data : null; }
+    function teacher() { return signedIn() && userDoc().role in ['teacher', 'admin']; }
+    function self(uid) { return signedIn() && request.auth.uid == uid; }
 
-    function userDoc() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    match /users/{uid} {
+      allow read: if self(uid) || teacher();
+      allow create: if self(uid);
+      allow update: if self(uid) || teacher();
+      allow delete: if teacher();
     }
-
-    function isTeacher() {
-      return signedIn() && userDoc().role == 'teacher';
-    }
-
-    match /users/{userId} {
-      allow read: if signedIn() && (request.auth.uid == userId || isTeacher());
-      allow create: if signedIn() && request.auth.uid == userId;
-      allow update: if signedIn() && request.auth.uid == userId;
-      allow delete: if false;
-    }
-
     match /groups/{groupId} {
       allow read: if signedIn();
-      allow create, update: if isTeacher();
-      allow delete: if isTeacher();
-
-      match /columns/{columnId} {
-        allow read: if signedIn();
-        allow create, update, delete: if isTeacher();
-      }
-
-      match /students/{studentId} {
-        allow read: if signedIn();
-        // Student/points mutations will be moved to trusted backend functions.
-        allow create, update, delete: if isTeacher();
-      }
+      allow create, update, delete: if teacher();
+      match /columns/{columnId} { allow read: if signedIn(); allow create, update, delete: if teacher(); }
+      match /students/{studentId} { allow read: if signedIn(); allow create, update, delete: if teacher(); }
     }
-
-    match /transactions/{transactionId} {
+    match /transactions/{id} {
       allow read: if signedIn();
       allow create, update, delete: if false;
     }
-
-    match /transferRequests/{requestId} {
+    match /transferRequests/{id} {
       allow read: if signedIn();
       allow create: if signedIn();
-      allow update: if isTeacher();
+      allow update: if teacher();
       allow delete: if false;
     }
-
-    match /settings/{settingId} {
-      allow read: if signedIn();
-      allow write: if isTeacher();
-    }
+    match /settings/{id} { allow read: if signedIn(); allow write: if teacher(); }
+    match /{document=**} { allow read, write: if false; }
   }
 }
