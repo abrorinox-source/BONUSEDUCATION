@@ -4,7 +4,8 @@ import '../models/spreadsheet_row.dart';
 import '../services/formula_engine.dart';
 
 class SpreadsheetScreen extends StatefulWidget {
-  const SpreadsheetScreen({super.key});
+  final String groupId;
+  const SpreadsheetScreen({super.key, this.groupId = 'demo'});
 
   @override
   State<SpreadsheetScreen> createState() => _SpreadsheetScreenState();
@@ -34,7 +35,7 @@ class _SpreadsheetScreenState extends State<SpreadsheetScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('10-A • Jadval'),
+        title: Text('${widget.groupId} • Jadval'),
         actions: [
           IconButton(icon: const Icon(Icons.add_box_outlined), tooltip: 'Ustun qo\'shish', onPressed: _addColumn),
           IconButton(icon: const Icon(Icons.refresh), tooltip: 'Yangilash', onPressed: () => setState(() {})),
@@ -56,7 +57,7 @@ class _SpreadsheetScreenState extends State<SpreadsheetScreen> {
         child: Row(children: [
           const Icon(Icons.table_chart_outlined),
           const SizedBox(width: 10),
-          const Text('10-A', style: TextStyle(fontWeight: FontWeight.w700)),
+          Text(widget.groupId, style: const TextStyle(fontWeight: FontWeight.w700)),
           const Spacer(),
           FilledButton.icon(onPressed: _addColumn, icon: const Icon(Icons.add), label: const Text('Ustun')),
         ]),
