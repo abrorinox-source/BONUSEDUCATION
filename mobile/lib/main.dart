@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'screens/spreadsheet_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,14 +20,7 @@ class BonusEducationApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
         useMaterial3: true,
       ),
-      home: const Scaffold(
-        body: Center(
-          child: Text(
-            'BONUSEDUCATION 2.0\nFirebase Edition',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
+      home: const SpreadsheetScreen(),
     );
   }
 }
