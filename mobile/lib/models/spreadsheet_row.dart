@@ -8,4 +8,9 @@ class SpreadsheetRow {
         id: id,
         cells: {...cells, columnId: value},
       );
+
+  factory SpreadsheetRow.fromMap(String id, Map<String, dynamic> data) => SpreadsheetRow(
+        id: id,
+        cells: Map<String, dynamic>.from(data['values'] as Map? ?? {}),
+      );
 }
