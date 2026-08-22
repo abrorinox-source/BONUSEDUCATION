@@ -1,0 +1,14 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+android/.gradle/
+android/app/.cxx/
+android/local.properties
+android/key.properties
+*.jks
+*.keystore
+firebase_options.dart
+android/app/google-services.json
