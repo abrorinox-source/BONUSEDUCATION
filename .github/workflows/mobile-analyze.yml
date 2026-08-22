@@ -1,0 +1,29 @@
+name: Mobile Analyze
+
+on:
+  push:
+    branches: [v2-firebase-android]
+  pull_request:
+    branches: [v2-firebase-android]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: stable
+          cache: true
+      - name: Generate Android platform files
+        run: flutter create --platforms=android --project-name bonus_education .
+      - name: Get packages
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Build debug APK
+        run: flutter build apk --debug
